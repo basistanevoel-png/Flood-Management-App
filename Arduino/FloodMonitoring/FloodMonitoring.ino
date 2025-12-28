@@ -6,11 +6,8 @@
 #include <WiFiClient.h>
 #include <BlynkSimpleEsp32.h>
 
-// char ssid[] = "Sheeesh";
-// char pass[] = "_UmayGad_";
-
-char ssid[] = "🐞 フアニコ 🐞";
-char pass[] = "Juanico@19761964";
+char ssid[] = "YOUR WIFI NAME";
+char pass[] = "YOUR WIFI PASSWORD";
 
 // A02YYUW TX -> ESP32 RX pin
 #define RXD2 16
