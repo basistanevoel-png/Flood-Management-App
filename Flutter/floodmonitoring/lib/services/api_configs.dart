@@ -1,6 +1,6 @@
 class ApiConfig {
   static const String baseUrl =
-      'https://flood-monitoring-e7h6.onrender.com'; //change this based on the backend's deployment (either Railway, localhost, or other cloud hosting sites) :P
+      'https://flood-management-app-wdm3.onrender.com'; //change this based on the backend's deployment (either Railway, localhost, or other cloud hosting sites) :P
 
   //endpoints with no parameters
   static const String latestData = '$baseUrl/api/latest-data/';
