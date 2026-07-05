@@ -1,198 +1,230 @@
-{% extends 'web/base.html' %}
 
-{% block title %}Flood Monitoring{% endblock %}
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
-{% block content %}
-<div class="max-w-6xl mx-auto">
-    <h1 class="text-3xl font-bold text-gray-800 mb-6">Flood Height Analysis (Feet)</h1>
+        <title>BYFLO Analytics</title>
 
-    <div class="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap items-center justify-between gap-4">
-        <div class="flex items-center gap-3">
-            <label class="font-bold text-gray-600">Sensor:</label>
-            <select id="sensorSelect" onchange="updateChartData()" class="border rounded px-3 py-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500">
-                <option value="all">All Sensors</option>
-                {% for sensor in sensors %}
-                    <option value="{{ sensor.sensor_id }}">{{ sensor.sensor_id }} - {{ sensor.location_name }}</option>
-                {% endfor %}
-            </select>
+        <script src="https://cdn.tailwindcss.com"></script>
+
+        <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+        <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
+    </head>
+    <body class="bg-slate-100">
+        <div class="max-w-6xl mx-auto">
+            <h1 class="text-3xl font-bold text-gray-800 mb-6">Flood Height Analysis (Feet)</h1>
+
+            <div class="bg-white p-4 rounded-lg shadow mb-6 flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-3">
+                    <label class="font-bold text-gray-600">Sensor:</label>
+                    <select
+                        id="sensorSelect"
+                        onchange="updateChartData()"
+                        class="border rounded px-3 py-2 bg-gray-50 outline-none focus:ring-2 focus:ring-blue-500">
+                        <option value="all">All Sensors</option>
+                    </select>
+                </div>
+
+                <div class="flex bg-gray-100 p-1 rounded-lg">
+                    <button onclick="setTimeScale('year')" id="btn-year" 
+                            class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
+                        Yearly
+                        <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                            12 months
+                        </span>
+                    </button>
+
+                    <button onclick="setTimeScale('month')" id="btn-month" 
+                            class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
+                        Monthly
+                        <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                            31 days
+                        </span>
+                    </button>
+
+                    <button onclick="setTimeScale('week')" id="btn-week" 
+                            class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
+                        Weekly
+                        <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                            7 days
+                        </span>
+                    </button>
+
+                    <button onclick="setTimeScale('day')" id="btn-day" 
+                            class="group relative px-4 py-2 rounded-md text-sm font-medium transition bg-white shadow text-blue-600">
+                        Daily
+                        <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                            24 hrs
+                        </span>
+                    </button>
+
+                    <button onclick="setTimeScale('hour')" id="btn-hour" 
+                            class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
+                        Hourly
+                        <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
+                            60 mins
+                        </span>
+                    </button>
+                </div>
+            </div>
+
+            <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
+                <canvas id="floodChart" style="width: 100%; height: 400px;"></canvas>
+            </div>
         </div>
 
-        <div class="flex bg-gray-100 p-1 rounded-lg">
-            <button onclick="setTimeScale('year')" id="btn-year" 
-                    class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
-                Yearly
-                <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
-                    12 months
-                </span>
-            </button>
+        <script>
 
-            <button onclick="setTimeScale('month')" id="btn-month" 
-                    class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
-                Monthly
-                <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
-                    31 days
-                </span>
-            </button>
+            const canvas = document.getElementById('floodChart');
+            const ctx = canvas.getContext('2d');
+            let currentScale = 'day'; 
 
-            <button onclick="setTimeScale('week')" id="btn-week" 
-                    class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
-                Weekly
-                <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
-                    7 days
-                </span>
-            </button>
+            const gradientStart = '#448AFF'; 
+            const gradientEnd = '#81D4FA';   
 
-            <button onclick="setTimeScale('day')" id="btn-day" 
-                    class="group relative px-4 py-2 rounded-md text-sm font-medium transition bg-white shadow text-blue-600">
-                Daily
-                <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
-                    24 hrs
-                </span>
-            </button>
-
-            <button onclick="setTimeScale('hour')" id="btn-hour" 
-                    class="group relative px-4 py-2 rounded-md text-sm font-medium transition hover:bg-gray-200">
-                Hourly
-                <span class="pointer-events-none absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-2 py-1 text-xs text-white opacity-0 transition-opacity group-hover:opacity-100">
-                    60 mins
-                </span>
-            </button>
-        </div>
-    </div>
-
-    <div class="bg-white p-6 rounded-lg shadow border border-gray-100">
-        <canvas id="floodChart" style="width: 100%; height: 400px;"></canvas>
-    </div>
-</div>
-
-<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns"></script>
-
-<script>
-    const canvas = document.getElementById('floodChart');
-    const ctx = canvas.getContext('2d');
-    let currentScale = 'day'; 
-
-    const gradientStart = '#448AFF'; 
-    const gradientEnd = '#81D4FA';   
-
-    function getFillGradient(context) {
-        const chartArea = context.chart.chartArea;
-        if (!chartArea) return null;
-        const gradient = context.chart.ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
-        gradient.addColorStop(0, 'rgba(68, 138, 255, 0.3)'); 
-        gradient.addColorStop(1, 'rgba(129, 212, 250, 0.1)'); 
-        return gradient;
-    }
-
-    let floodChart = new Chart(ctx, {
-        type: 'line',
-        data: { datasets: [] },
-        options: {
-            responsive: true,
-            maintainAspectRatio: false,
-            interaction: { mode: 'index', intersect: false },
-            elements: {
-                point: {
-                    radius: 0,           
-                    hitRadius: 10,       
-                    hoverRadius: 6,      
-                    hoverBackgroundColor: '#fff',
-                    hoverBorderWidth: 3,
-                },
-                line: { borderWidth: 3, tension: 0.2, capBezierPoints: true }
-            },
-            plugins: {
-                legend: { display: true, position: 'top', labels: { usePointStyle: true } }
-            },
-            scales: {
-                x: {
-                    type: 'time',
-                    time: {
-                        unit: 'hour',
-                        displayFormats: { hour: 'HH:mm', day: 'MMM d', month: 'MMM yyyy' }
-                    },
-                    grid: { display: false }, 
-                    title: { display: true, text: 'Timeline' }
-                },
-                y: {
-                    beginAtZero: true,
-                    grid: { color: '#f3f4f6' },
-                    title: { display: true, text: 'Height (Feet)' }
+            async function loadSensors() {
+                try {
+                    const response = await fetch("/api/sensors/");
+                    const result = await response.json();
+                    if (!result.success) return;
+                    const select = document.getElementById("sensorSelect");
+                    result.data.forEach(sensor => {
+                        const option = document.createElement("option");
+                        option.value = sensor.sensor_id;
+                        option.textContent = `${sensor.sensor_id} - ${sensor.location_name}`;
+                        select.appendChild(option);
+                    });
+                }
+                catch(error) {
+                    console.error(error);
                 }
             }
-        }
-    });
 
-    async function updateChartData() {
-        const sensorId = document.getElementById('sensorSelect').value;
-        const range = currentScale;
+            function getFillGradient(context) {
+                const chartArea = context.chart.chartArea;
+                if (!chartArea) return null;
+                const gradient = context.chart.ctx.createLinearGradient(0, chartArea.top, 0, chartArea.bottom);
+                gradient.addColorStop(0, 'rgba(68, 138, 255, 0.3)'); 
+                gradient.addColorStop(1, 'rgba(129, 212, 250, 0.1)'); 
+                return gradient;
+            }
 
-        try {
-            const response = await fetch('/api/get-web-chart-data/', {
-                method: 'POST',
-                headers: {
-                    'Content-Type': 'application/json',
-                    'X-CSRFToken': '{{ csrf_token }}' 
-                },
-                body: JSON.stringify({ sensor_id: sensorId, range: range })
+            let floodChart = new Chart(ctx, {
+                type: 'line',
+                data: { datasets: [] },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: { mode: 'index', intersect: false },
+                    elements: {
+                        point: {
+                            radius: 0,           
+                            hitRadius: 10,       
+                            hoverRadius: 6,      
+                            hoverBackgroundColor: '#fff',
+                            hoverBorderWidth: 3,
+                        },
+                        line: { borderWidth: 3, tension: 0.2, capBezierPoints: true }
+                    },
+                    plugins: {
+                        legend: { display: true, position: 'top', labels: { usePointStyle: true } }
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'hour',
+                                displayFormats: { hour: 'HH:mm', day: 'MMM d', month: 'MMM yyyy' }
+                            },
+                            grid: { display: false }, 
+                            title: { display: true, text: 'Timeline' }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            grid: { color: '#f3f4f6' },
+                            title: { display: true, text: 'Height (Feet)' }
+                        }
+                    }
+                }
             });
 
-            const result = await response.json();
-            
-            if (result.success) {
-                floodChart.data.datasets = result.datasets.map((ds, index) => {
-                    const isSingle = result.datasets.length === 1;
-                    return {
-                        label: ds.label,
-                        data: ds.data,
-                        borderColor: isSingle ? gradientStart : getColors(index),
-                        backgroundColor: isSingle ? (context) => getFillGradient(context) : 'transparent',
-                        fill: isSingle, 
-                        pointRadius: (ctx) => {
-                            const count = ctx.dataset.data.length;
-                            return (ctx.dataIndex === 0 || ctx.dataIndex === count - 1) ? 4 : 0;
-                        },
-                    };
-                });
-                
-                if (range === 'year') {
-                    floodChart.options.scales.x.time.unit = 'month';
-                    floodChart.options.scales.x.time.displayFormats = { month: 'MMM yyyy' };
-                } else if (range === 'month' || range === 'week') {
-                    floodChart.options.scales.x.time.unit = 'day';
-                    floodChart.options.scales.x.time.displayFormats = { day: 'MMM d' };
-                } else if (range === 'day') {
-                    floodChart.options.scales.x.time.unit = 'hour';
-                    floodChart.options.scales.x.time.displayFormats = { hour: 'HH:mm' };
-                } else { 
-                    floodChart.options.scales.x.time.unit = 'minute';
-                    floodChart.options.scales.x.time.stepSize = 5; 
-                    floodChart.options.scales.x.time.displayFormats = { minute: 'HH:mm' };
+            async function updateChartData() {
+                const sensorId = document.getElementById('sensorSelect').value;
+                const range = currentScale;
+
+                try {
+                    const response = await fetch(`/api/web-history?id=${sensorId}&range=${range}`);
+
+                    const result = await response.json();
+                    
+                    if (result.success) {
+
+                        const datasets = result.data.datasets;
+
+                        floodChart.data.datasets = datasets.map((ds, index) => {
+
+                            const isSingle = datasets.length === 1;
+
+                            return {
+
+                                label: ds.label,
+
+                                data: ds.data,
+
+                                borderColor: isSingle
+                                    ? gradientStart
+                                    : getColors(index),
+
+                                backgroundColor: isSingle
+                                    ? (ctx) => getFillGradient(ctx)
+                                    : "transparent",
+
+                                fill: isSingle,
+
+                                pointRadius: (ctx) => {
+
+                                    const count = ctx.dataset.data.length;
+
+                                    return (
+                                        ctx.dataIndex === 0 ||
+                                        ctx.dataIndex === count - 1
+                                    ) ? 4 : 0;
+
+                                }
+
+                            };
+
+                        });
+                    }
+                } catch (error) {
+                    console.error("Error fetching data:", error);
                 }
-
-                floodChart.update();
             }
-        } catch (error) {
-            console.error("Error fetching data:", error);
-        }
-    }
 
-    function getColors(i) {
-        const colors = ['#448AFF', '#16a34a', '#dc2626', '#9333ea'];
-        return colors[i % colors.length];
-    }
+            function getColors(i) {
+                const colors = ['#448AFF', '#16a34a', '#dc2626', '#9333ea'];
+                return colors[i % colors.length];
+            }
 
-    function setTimeScale(scale) {
-        currentScale = scale;
-        ['hour', 'year', 'month', 'week', 'day'].forEach(s => {
-            const btn = document.getElementById(`btn-${s}`);
-            if (btn) btn.classList.remove('bg-white', 'shadow', 'text-blue-600');
-        });
-        document.getElementById(`btn-${scale}`).classList.add('bg-white', 'shadow', 'text-blue-600');
-        updateChartData();
-    }
+            function setTimeScale(scale) {
+                currentScale = scale;
+                ['hour', 'year', 'month', 'week', 'day'].forEach(s => {
+                    const btn = document.getElementById(`btn-${s}`);
+                    if (btn) btn.classList.remove('bg-white', 'shadow', 'text-blue-600');
+                });
+                document.getElementById(`btn-${scale}`).classList.add('bg-white', 'shadow', 'text-blue-600');
+                updateChartData();
+            }
 
-    updateChartData();
-</script>
-{% endblock %}
+            window.onload = async () => {
+
+                await loadSensors();
+
+                updateChartData();
+
+            };
+        </script>        
+    </body>
+</html>

@@ -6,7 +6,16 @@ from rest_framework.response import Response
 
 from api.utils import api_response, build_avoid_polygons, normalize_avoid_zones
 from api.util.data_collector import run_data_collection_cycle
-from .supabase.utils import get_emergency_contacts_from_supabase, get_latest_data_from_supabase, get_latest_sensor_wl_data_from_supabase, get_sensor_history_from_supabase, get_specific_sensor_details_from_supabase, get_vehicle_thresholds_from_supabase, get_web_chart_data_from_supabase
+from .supabase.utils import (
+    get_emergency_contacts_from_supabase, 
+    get_latest_data_from_supabase, 
+    get_latest_sensor_wl_data_from_supabase, 
+    get_sensor_details_from_supabase, 
+    get_sensor_history_from_supabase, 
+    get_specific_sensor_details_from_supabase, 
+    get_vehicle_thresholds_from_supabase, 
+    get_web_chart_data_from_supabase
+)
 import requests, os
 
 @api_view(['POST'])
@@ -20,6 +29,21 @@ def run_data_collector(request):
     run_data_collection_cycle()
 
     return JsonResponse({"ok": True})
+
+@api_view(['GET'])
+def get_sensor_details(request):
+    """
+    REQUEST:
+    /api/sensors/
+    """
+    sensors = get_sensor_details_from_supabase()
+
+    return api_response(
+        success=True,
+        data=sensors,
+        message="Sensor info retrieved."
+    )
+
 @api_view(['GET'])
 def get_latest_data(request): 
 

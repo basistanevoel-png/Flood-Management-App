@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math';
 
+import 'package:floodmonitoring/services/api_configs.dart';
 import 'package:floodmonitoring/services/flood_level.dart';
 import 'package:floodmonitoring/services/global.dart';
 import 'package:floodmonitoring/services/location.dart';
@@ -1431,22 +1432,21 @@ class _MapScreenState extends State<MapScreen> {
     ).show(context);
   }
 
-  // bool showFloodZones = false;
+  bool showFloodZones = false;
 
-  //   /// ----- GET FLOOD TILE OVERLAYS -----
-  // Set<TileOverlay> getFloodTileOverlays() {
-  //   return {
-  //     TileOverlay(
-  //       tileOverlayId: TileOverlayId('xyz_tiles'),
-  //       tileProvider: UrlTileProvider(
-  //         urlTemplate: '$serverUri/media/tiles/{z}/{x}/{y}.png',
-  //       ),
-  //       transparency: 0.3,
-  //       zIndex: 1,
-  //     ),
-
-  //   };
-  // }
+  /// ----- GET FLOOD TILE OVERLAYS -----
+  Set<TileOverlay> getFloodTileOverlays() {
+    return {
+      TileOverlay(
+        tileOverlayId: TileOverlayId('xyz_tiles'),
+        tileProvider: UrlTileProvider(
+          urlTemplate: '${ApiConfig.floodTiles}{z}/{x}/{y}.png',
+        ),
+        transparency: 0.3,
+        zIndex: 1,
+      ),
+    };
+  }
 
   MapType _currentMapType = MapType.normal;
 
@@ -1529,7 +1529,7 @@ class _MapScreenState extends State<MapScreen> {
             myLocationEnabled: false,
             zoomControlsEnabled: false,
             tileOverlays: {
-              //if (showFloodZones) ...getFloodTileOverlays(),
+              if (showFloodZones) ...getFloodTileOverlays(),
               if (useOpenFreeMapStyle)
                 TileOverlay(
                   tileOverlayId: const TileOverlayId(
@@ -1612,7 +1612,8 @@ class _MapScreenState extends State<MapScreen> {
                     showMapSettingsPopup(
                       context,
                       initialMapType: mapTypeToString(_currentMapType),
-                      onConfirm: (selectedMapType) {
+                      initialLayer: showFloodZones ? "Flood GIS" : "None",
+                      onConfirm: (selectedMapType, selectedLayer) {
                         setState(() {
                           switch (selectedMapType) {
                             case "Normal":
@@ -1629,16 +1630,16 @@ class _MapScreenState extends State<MapScreen> {
                               break;
                           }
 
-                          // showFloodZones = (selectedLayer == "Flood GIS");
+                          showFloodZones = (selectedLayer == "Flood GIS");
                         });
 
-                        // if (selectedLayer == "Flood GIS") {
-                        //   Future.delayed(Duration.zero, () {
-                        //     if (mounted) {
-                        //       showInfoHeatMap(context);
-                        //     }
-                        //   });
-                        // }
+                        if (selectedLayer == "Flood GIS") {
+                          Future.delayed(Duration.zero, () {
+                            if (mounted) {
+                              showInfoHeatMap(context);
+                            }
+                          });
+                        }
                       },
                     );
                   },
@@ -2344,8 +2345,9 @@ class _MapScreenState extends State<MapScreen> {
               onVerticalDragUpdate: (details) {
                 setState(() {
                   pinConfirmationDragOffset -= details.delta.dy;
-                  if (pinConfirmationDragOffset > 0)
+                  if (pinConfirmationDragOffset > 0) {
                     pinConfirmationDragOffset = 0;
+                  }
                   if (pinConfirmationDragOffset < -pinConfirmationSheetHeight) {
                     pinConfirmationDragOffset = -pinConfirmationSheetHeight;
                   }

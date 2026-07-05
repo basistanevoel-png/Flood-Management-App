@@ -22,5 +22,7 @@ class ApiConfig {
 
   static const String userWeather = '$baseUrl/api/user-weather';
 
+  static const String floodTiles = '$baseUrl/media/tiles/';
+
   static const String latestSpecific = '$baseUrl/api/latest-specific';
 }

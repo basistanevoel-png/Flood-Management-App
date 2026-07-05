@@ -4,13 +4,17 @@ import 'package:floodmonitoring/utils/style.dart';
 void showMapSettingsPopup(
   BuildContext context, {
   required String initialMapType,
-  required Function(String mapType) onConfirm,
+  required String initialLayer,
+  required Function(String mapType, String layer) onConfirm,
+  bool initialFloodZone = false,
 }) {
   showDialog(
     context: context,
     barrierDismissible: false,
     builder: (context) {
       String selectedMapType = initialMapType;
+      String selectedLayer = initialLayer;
+      bool showFloodZones = initialFloodZone;
 
       return WillPopScope(
         onWillPop: () async => false,
@@ -78,8 +82,6 @@ void showMapSettingsPopup(
                       ),
                     ),
 
-                    // Divider removed
-
                     /// CONTENT
                     Flexible(
                       child: SingleChildScrollView(
@@ -131,40 +133,40 @@ void showMapSettingsPopup(
                               ],
                             ),
 
-                            // const SizedBox(height: 20),
-                            // _sectionTitle("Overlays"),
-                            // GridView.count(
-                            //   crossAxisCount: 2,
-                            //   shrinkWrap: true,
-                            //   physics: const NeverScrollableScrollPhysics(),
-                            //   crossAxisSpacing: 12,
-                            //   mainAxisSpacing: 12,
-                            //   childAspectRatio: 1.1,
-                            //   children: [
-                            //     mapImageOption(
-                            //       label: "None",
-                            //       image: "assets/images/layers/none.png",
-                            //       selected: selectedLayer == "None",
-                            //       onTap: () {
-                            //         setState(() {
-                            //           selectedLayer = "None";
-                            //           showFloodZones = false;
-                            //         });
-                            //       },
-                            //     ),
-                            //     mapImageOption(
-                            //       label: "Flood Zones",
-                            //       image: "assets/images/layers/gis.png",
-                            //       selected: selectedLayer == "Flood GIS",
-                            //       onTap: () {
-                            //         setState(() {
-                            //           selectedLayer = "Flood GIS";
-                            //           showFloodZones = true;
-                            //         });
-                            //       },
-                            //     ),
-                            //   ],
-                            // ),
+                            const SizedBox(height: 20),
+                            _sectionTitle("Overlays"),
+                            GridView.count(
+                              crossAxisCount: 2,
+                              shrinkWrap: true,
+                              physics: const NeverScrollableScrollPhysics(),
+                              crossAxisSpacing: 12,
+                              mainAxisSpacing: 12,
+                              childAspectRatio: 1.1,
+                              children: [
+                                mapImageOption(
+                                  label: "None",
+                                  image: "assets/images/layers/none.png",
+                                  selected: selectedLayer == "None",
+                                  onTap: () {
+                                    setState(() {
+                                      selectedLayer = "None";
+                                      showFloodZones = false;
+                                    });
+                                  },
+                                ),
+                                mapImageOption(
+                                  label: "Flood Zones",
+                                  image: "assets/images/layers/gis.png",
+                                  selected: selectedLayer == "Flood GIS",
+                                  onTap: () {
+                                    setState(() {
+                                      selectedLayer = "Flood GIS";
+                                      showFloodZones = true;
+                                    });
+                                  },
+                                ),
+                              ],
+                            ),
                           ],
                         ),
                       ),
@@ -186,7 +188,7 @@ void showMapSettingsPopup(
                             child: primaryButton(
                               text: "APPLY",
                               onTap: () {
-                                onConfirm(selectedMapType);
+                                onConfirm(selectedMapType, selectedLayer);
                                 Navigator.pop(context);
                               },
                             ),

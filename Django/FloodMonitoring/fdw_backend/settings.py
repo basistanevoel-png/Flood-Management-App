@@ -28,10 +28,9 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = 'django-insecure-7ym#vlzv&2j_o8x6&+xuq^_^=-i%eo5js!v63q^a^#x*&x8%-j'
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = False
+DEBUG = True #Make this False during production
 
 ALLOWED_HOSTS = [
-    "fdwdjangobackend-production.up.railway.app", #railway deployment
     "127.0.0.1",
      ".onrender.com",
      "192.168.1.10",
@@ -49,6 +48,8 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'rest_framework',
+    'django_apscheduler',
+    'web',
     'api',
 ]
 
@@ -72,6 +73,7 @@ TEMPLATES = [
         'APP_DIRS': True,
         'OPTIONS': {
             'context_processors': [
+                'django.template.context_processors.debug', #comment this during production
                 'django.template.context_processors.request',
                 'django.contrib.auth.context_processors.auth',
                 'django.contrib.messages.context_processors.messages',
@@ -111,6 +113,9 @@ AUTH_PASSWORD_VALIDATORS = [
         'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
     },
 ]
+
+MEDIA_URL = '/media/'
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
