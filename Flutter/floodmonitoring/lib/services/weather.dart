@@ -1,37 +1,46 @@
 import 'dart:convert';
+import 'package:floodmonitoring/services/api_configs.dart';
 import 'package:http/http.dart' as http;
 
-Future<Map<String, dynamic>?> loadWeather(double latitude, double longitude) async {
+Future<Map<String, dynamic>?> loadWeather(
+  double latitude,
+  double longitude,
+) async {
   try {
-    String apiKey = 'dfa37345e5d4c1fa93dcb18d17f07643';
-    String uri =
-        'https://api.openweathermap.org/data/2.5/weather?lat=$latitude&lon=$longitude&units=metric&appid=$apiKey';
-
-    var res = await http.get(
-      Uri.parse(uri),
-      headers: {"Content-Type": "application/json"},
+    final uri = Uri.parse(ApiConfig.userWeather).replace(
+      queryParameters: {
+        "latitude": latitude.toString(),
+        "longitude": longitude.toString(),
+      },
     );
 
-    var response = jsonDecode(res.body);
-    //print(res.body);
+    final res = await http.get(uri);
 
-    if (res.statusCode == 200) {
-      // Create a map with the values you need
-      return {
-        "temperature": response['main']['temp'].toStringAsFixed(1),
-        "description": response['weather'][0]['description']
-            .split(' ')
-            .map((word) => word[0].toUpperCase() + word.substring(1))
-            .join(' '),
-        "iconCode": response['weather'][0]['icon'].replaceAll(RegExp(r'[a-zA-Z]'), ''),
-        "pressure": response['main']['pressure'],
-      };
-    } else {
-      print('Failed to fetch weather: ${res.statusCode}');
+    if (res.statusCode != 200) {
+      print("Weather request failed: ${res.statusCode}");
       return null;
     }
+
+    final body = jsonDecode(res.body);
+
+    if (body["success"] != true) {
+      print("Backend error: ${body["error"] ?? body["message"]}");
+      return null;
+    }
+
+    final data = body["data"];
+
+    return {
+      "temperature": data["temperature"].toString(),
+      "description": data["description"].toString(),
+      "pressure": data["pressure"].toString(),
+      "iconCode": data["iconCode"].toString().replaceAll(
+        RegExp(r'[a-zA-Z]'),
+        '',
+      ),
+    };
   } catch (e) {
-    print(e);
+    print("Weather fetch exception: $e");
     return null;
   }
 }

@@ -1,24 +1,127 @@
 import 'package:flutter/material.dart';
 
-///MAin Color
-const Color color1 = Color(0xFF046EEC);
-const Color color2 = Color(0xFF2A2A32);
-const Color color3 = Color(0xFFCED1D6);
 
-///Sub Color
-const Color color1_2 = Color(0xFF0011B9);
-const Color color1_3 = Color(0xFF95C4FF);
-const Color color1_4 = Color(0xFFDDECFF);
-const Color color3_2 = Color(0xFFE4E8EE);
+/// PRIMARY THEME (Modern Blue)
+const Color colorPrimary = Color(0xFF2979FF);
+const Color colorPrimaryMid = Color(0xFF046EEC);
+const Color colorPrimaryDark = Color(0xFF0D47A1);
+const Color colorPrimaryLight = Color(0xFF82B1FF);
+const Color colorPrimaryDeep = Color(0xFF2A2A32);
 
-///Polyline Color
-const Color color_polyline1 = Color(0xFF00d4C6);
-const Color color_polyline2 = Color(0xffff7070);
 
-///Alert Color
-const Color color_alert = Color(0xFFFAD8D8);
+/// BACKGROUNDS
+const Color colorBackground = Color(0xFFE9F3FF);
+const Color colorCard = Colors.white;
+const Color colorSheet = Colors.white;
 
-///Status Color
-const Color color_safe = Color(0xFF4CAF50);
-const Color color_warning = Color(0xFFFFC107);
-const Color color_danger = Color(0xFFF44336);
+
+/// TEXT
+const Color colorTextPrimary = Color(0xFF1F2937);
+const Color colorTextSecondary = Color(0xFF6B7280);
+const Color colorTextOnBlue = Colors.white;
+
+/// ACCENT (for highlights, CTA, buttons)
+const Color colorAccent = Color(0xFF40C4FF);
+
+/// GRADIENT (for your top banner & cards)
+const Color gradientStart = Color(0xFF448AFF);
+const Color gradientEnd = Color(0xFF81D4FA);
+
+/// STATUS COLORS (keep readable & material-like)
+const Color colorSafe = Color(0xFF4CAF50);
+const Color colorWarning = Color(0xFFFFB300);
+const Color colorDanger = Color(0xFFE53935);
+
+/// ALERT BACKGROUND
+const Color colorAlertBg = Color(0xFFFFEBEE);
+
+/// POLYLINE
+const Color colorPolylineMain = Color(0xFF2196F3);
+const Color colorPolylineBack = Color(0xFF81D4FA);
+
+
+
+/// ----- PRIMARY BUTTON -----
+Widget primaryButton({
+  required String text,
+  required VoidCallback onTap,
+}) {
+  return SizedBox(
+    height: 48,
+    width: double.infinity,
+    child: ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: colorPrimaryMid,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      onPressed: onTap,
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    ),
+  );
+}
+
+/// ----- SECONDARY BUTTON -----
+Widget secondaryButton({
+  required String text,
+  required VoidCallback onTap,
+}) {
+  return SizedBox(
+    height: 48,
+    child: OutlinedButton(
+      style: OutlinedButton.styleFrom(
+        side: const BorderSide(color: colorPrimaryMid, width: 2),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      onPressed: onTap,
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: colorPrimaryMid,
+        ),
+      ),
+    ),
+  );
+}
+
+/// ----- PRIMARY BUTTON V2 -----
+Widget primaryButton2({
+  required String text,
+  required VoidCallback onTap,
+}) {
+  return SizedBox(
+    height: 48,
+    width: double.infinity,
+    child: ElevatedButton(
+      style: ElevatedButton.styleFrom(
+        backgroundColor: Colors.red.shade700,
+        foregroundColor: Colors.white,
+        elevation: 0,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(10),
+        ),
+      ),
+      onPressed: onTap,
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 16,
+          fontWeight: FontWeight.bold,
+          color: Colors.white,
+        ),
+      ),
+    ),
+  );
+}

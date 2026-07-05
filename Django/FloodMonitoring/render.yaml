@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: fdw-django-backend
+    env: python
+    plan: free
+
+    buildCommand: "pip install uv && uv sync"
+
+    startCommand: uv run gunicorn fdw_backend.wsgi:application --bind 0.0.0.0:$PORT
+
+    envVars:
+      - key: DJANGO_SETTINGS_MODULE
+        value: fdw_backend.settings
+
+      - key: PYTHON_VERSION
+        value: 3.11.0

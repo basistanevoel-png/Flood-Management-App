@@ -1,8 +1,11 @@
 import 'dart:convert';
+import 'package:floodmonitoring/services/api_configs.dart';
 import 'package:floodmonitoring/services/global.dart';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:google_maps_flutter/google_maps_flutter.dart';
+import 'package:floodmonitoring/utils/style.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class PlaceSearchPopup extends StatefulWidget {
   const PlaceSearchPopup({super.key});
@@ -12,10 +15,16 @@ class PlaceSearchPopup extends StatefulWidget {
 }
 
 class _PlaceSearchPopupState extends State<PlaceSearchPopup> {
+  // ========================================
+  // STATE / VARIABLES
+  // ========================================
+
   final TextEditingController _controller = TextEditingController();
   List<dynamic> _results = [];
   bool _loading = false;
+  List<Map<String, dynamic>> _recentPlaces = [];
 
+  /// ----- FAMOUS PLACES -----
   final List<Map<String, dynamic>> _famousPlaces = [
     {'name': 'Rizal Park, Manila', 'latLng': LatLng(14.5826, 120.9794)},
     {'name': 'SM Mall of Asia, Pasay', 'latLng': LatLng(14.5345, 120.9816)},
@@ -23,7 +32,63 @@ class _PlaceSearchPopupState extends State<PlaceSearchPopup> {
     {'name': 'Fort Santiago, Manila', 'latLng': LatLng(14.5939, 120.9740)},
   ];
 
-  /// 🔍 Google Places Autocomplete (Philippines only)
+  // ========================================
+  // INITIALIZATION (initState)
+  // ========================================
+
+  @override
+  void initState() {
+    super.initState();
+    _loadRecentPlaces();
+  }
+
+  // ========================================
+  // STATE / VARIABLES
+  // ========================================
+
+  /// ----- LOAD RECENT -----
+  Future<void> _loadRecentPlaces() async {
+    final prefs = await SharedPreferences.getInstance();
+    String? encoded = prefs.getString('recent_search_history');
+    if (encoded != null) {
+      List<dynamic> decoded = jsonDecode(encoded);
+      setState(() {
+        _recentPlaces = decoded
+            .map(
+              (item) => {
+                'name': item['name'],
+                'latLng': LatLng(item['lat'], item['lng']),
+              },
+            )
+            .toList();
+      });
+    }
+  }
+
+  /// ----- SAVE TO RECENT -----
+  Future<void> _saveToRecent(String name, LatLng latLng) async {
+    final prefs = await SharedPreferences.getInstance();
+
+    _recentPlaces.removeWhere((element) => element['name'] == name);
+
+    _recentPlaces.insert(0, {'name': name, 'latLng': latLng});
+
+    if (_recentPlaces.length > 4) _recentPlaces.removeLast();
+
+    List<Map<String, dynamic>> toSave = _recentPlaces
+        .map(
+          (e) => {
+            'name': e['name'],
+            'lat': (e['latLng'] as LatLng).latitude,
+            'lng': (e['latLng'] as LatLng).longitude,
+          },
+        )
+        .toList();
+
+    await prefs.setString('recent_search_history', jsonEncode(toSave));
+  }
+
+  /// ----- SEARCH PLACES -----
   Future<void> _searchPlace(String input) async {
     if (input.isEmpty) {
       setState(() => _results.clear());
@@ -32,147 +97,292 @@ class _PlaceSearchPopupState extends State<PlaceSearchPopup> {
 
     setState(() => _loading = true);
 
-    final url =
-        'https://maps.googleapis.com/maps/api/place/autocomplete/json'
-        '?input=$input'
-        '&components=country:PH'
-        '&key=$googleMapAPI';
+    try {
+      final uri = Uri.parse(
+        ApiConfig.locationSearch,
+      ).replace(queryParameters: {"q": input});
 
-    final res = await http.get(Uri.parse(url));
-    final data = jsonDecode(res.body);
+      print("SEARCH URI: $uri");
 
-    setState(() {
-      _results = data['predictions'] ?? [];
-      _loading = false;
-    });
+      final res = await http.get(uri);
+
+      print("STATUS CODE: ${res.statusCode}");
+      print("RAW BODY: ${res.body}");
+
+      final response = jsonDecode(res.body);
+
+      print("DECODED RESPONSE: $response");
+
+      if (res.statusCode == 200 && response["success"] == true) {
+        print("RESULT DATA: ${response["data"]}");
+
+        setState(() {
+          _results = List<Map<String, dynamic>>.from(response["data"]);
+        });
+
+        print("RESULT COUNT: ${_results.length}");
+      } else {
+        print("SEARCH FAILED");
+      }
+    } catch (e) {
+      print("Place search error: $e");
+    } finally {
+      setState(() => _loading = false);
+    }
   }
 
-  /// 📍 Get place LatLng
+  /// ----- SELECT PLACE -----
   Future<void> _selectPlace(String placeId, String name) async {
-    final url =
-        'https://maps.googleapis.com/maps/api/place/details/json'
-        '?place_id=$placeId'
-        '&fields=geometry'
-        '&key=$googleMapAPI';
+    try {
+      final uri = Uri.parse(
+        ApiConfig.locationDetails,
+      ).replace(queryParameters: {"id": placeId});
 
-    final res = await http.get(Uri.parse(url));
-    final data = jsonDecode(res.body);
+      final res = await http.get(uri);
 
-    final loc = data['result']['geometry']['location'];
+      final response = jsonDecode(res.body);
 
-    Navigator.pop(
-      context,
-      {
-        'name': name,
-        'latLng': LatLng(loc['lat'], loc['lng']),
-      },
+      if (res.statusCode == 200 && response["success"] == true) {
+        final data = response["data"];
+
+        final latlong = data["latlong"];
+
+        final selectedLatLng = LatLng(latlong[0], latlong[1]);
+
+        await _saveToRecent(name, selectedLatLng);
+
+        if (!mounted) return;
+
+        Navigator.pop(context, {"name": name, "latLng": selectedLatLng});
+      }
+    } catch (e) {
+      print("Place selection error: $e");
+    }
+  }
+
+  /// ----- CUSTOM APP BAR -----
+  PreferredSizeWidget _modernAppBar() {
+    return AppBar(
+      backgroundColor: Colors.white,
+      elevation: 0,
+      centerTitle: true,
+      automaticallyImplyLeading: false,
+      bottom: PreferredSize(
+        preferredSize: const Size.fromHeight(2),
+        child: Container(color: colorPrimaryMid, height: 2),
+      ),
+      flexibleSpace: SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          child: Row(
+            children: [
+              InkWell(
+                onTap: () => Navigator.pop(context),
+                borderRadius: BorderRadius.circular(8),
+                child: Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: colorPrimaryMid.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: const Icon(
+                    Icons.arrow_back_ios_new,
+                    color: colorPrimaryMid,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Text(
+                  (searchStartLocation)
+                      ? "Select starting point"
+                      : (searchEndLocation)
+                      ? "Select destination"
+                      : "Select location",
+                  style: const TextStyle(
+                    fontFamily: 'AvenirNext',
+                    fontSize: 18,
+                    fontWeight: FontWeight.w600,
+                    color: colorPrimaryMid,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const SizedBox(width: 34),
+            ],
+          ),
+        ),
+      ),
     );
   }
 
+  // ========================================
+  // BUILD / CORE UI
+  // ========================================
+
   @override
   Widget build(BuildContext context) {
+    bool showCurrentLocation = _controller.text.isEmpty && searchStartLocation;
+    int currentLocCount = showCurrentLocation ? 1 : 0;
+    int recentCount = _controller.text.isEmpty ? _recentPlaces.length : 0;
+    int famousCount = _controller.text.isEmpty ? _famousPlaces.length : 0;
+
     return Scaffold(
-      backgroundColor: Colors.white, // ✅ White background
-      body: SafeArea(
-        child: Column(
-          children: [
-            // Top bar with back button
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-              child: Row(
-                children: [
-                  GestureDetector(
-                    onTap: () => Navigator.pop(context),
-                    child: const Icon(Icons.arrow_back, size: 28, color: Colors.black87),
-                  ),
-                  const SizedBox(width: 12),
-                  const Text(
-                    "Select Location",
-                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-                  ),
-                ],
-              ),
-            ),
-
-            // Search Bar
-            Container(
-              margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 16),
-              decoration: BoxDecoration(
-                color: Colors.grey[100],
-                borderRadius: BorderRadius.circular(24),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black12,
-                    blurRadius: 4,
-                    offset: Offset(0, 2),
-                  ),
-                ],
-              ),
-              child: TextField(
-                controller: _controller,
-                autofocus: true,
-                onChanged: _searchPlace,
-                decoration: const InputDecoration(
-                  hintText: 'Search for a place',
-                  border: InputBorder.none,
-                  icon: Icon(Icons.search),
+      backgroundColor: Colors.white,
+      appBar: _modernAppBar(),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 10),
+            child: TextField(
+              controller: _controller,
+              onChanged: _searchPlace,
+              style: const TextStyle(fontFamily: 'AvenirNext', fontSize: 15),
+              decoration: InputDecoration(
+                hintText: "Search places in the Philippines",
+                hintStyle: TextStyle(
+                  fontFamily: 'AvenirNext',
+                  color: Colors.grey[500],
+                ),
+                prefixIcon: const Icon(Icons.search, color: colorPrimaryMid),
+                filled: true,
+                fillColor: colorBackground,
+                contentPadding: const EdgeInsets.symmetric(vertical: 14),
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(14),
+                  borderSide: BorderSide.none,
                 ),
               ),
             ),
+          ),
+          Expanded(
+            child: _loading
+                ? const Center(
+                    child: CircularProgressIndicator(color: colorPrimaryMid),
+                  )
+                : ListView.separated(
+                    itemCount: _controller.text.isEmpty
+                        ? (currentLocCount + recentCount + famousCount)
+                        : _results.length,
+                    separatorBuilder: (_, __) =>
+                        Divider(height: 1, color: Colors.grey.shade200),
+                    itemBuilder: (context, index) {
+                      if (_controller.text.isEmpty) {
+                        if (showCurrentLocation && index == 0) {
+                          return ListTile(
+                            leading: const Icon(
+                              Icons.my_location,
+                              color: colorPrimaryMid,
+                            ),
+                            title: const Text(
+                              "Current Location",
+                              style: TextStyle(
+                                fontFamily: 'AvenirNext',
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              "Use your device's GPS",
+                              style: TextStyle(
+                                fontFamily: 'AvenirNext',
+                                fontSize: 12,
+                              ),
+                            ),
+                            onTap: () => Navigator.pop(context, {
+                              'name': 'Current Location',
+                              'latLng': null,
+                            }),
+                          );
+                        }
 
-            // Results
-            Expanded(
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black12,
-                      blurRadius: 10,
-                      offset: Offset(0, -2),
-                    ),
-                  ],
-                ),
-                child: _loading
-                    ? const Center(child: CircularProgressIndicator())
-                    : ListView.separated(
-                  padding: const EdgeInsets.symmetric(vertical: 8),
-                  separatorBuilder: (_, __) => const Divider(height: 1),
-                  itemCount: _controller.text.isEmpty
-                      ? _famousPlaces.length
-                      : _results.length,
-                  itemBuilder: (context, index) {
-                    if (_controller.text.isEmpty) {
-                      final place = _famousPlaces[index];
-                      return ListTile(
-                        leading: const Icon(Icons.star, color: Colors.orange),
-                        title: Text(place['name']),
-                        onTap: () {
-                          Navigator.pop(context, {
+                        int recentStartIndex = currentLocCount;
+                        if (index >= recentStartIndex &&
+                            index < recentStartIndex + recentCount) {
+                          final place = _recentPlaces[index - recentStartIndex];
+                          return ListTile(
+                            leading: const Icon(
+                              Icons.history_rounded,
+                              color: Colors.grey,
+                            ),
+                            title: Text(
+                              place['name'],
+                              style: const TextStyle(
+                                fontFamily: 'AvenirNext',
+                                fontWeight: FontWeight.w500,
+                              ),
+                            ),
+                            subtitle: const Text(
+                              "Recent search",
+                              style: TextStyle(
+                                fontFamily: 'AvenirNext',
+                                fontSize: 12,
+                              ),
+                            ),
+                            onTap: () => Navigator.pop(context, {
+                              'name': place['name'],
+                              'latLng': place['latLng'],
+                            }),
+                          );
+                        }
+
+                        int famousStartIndex = currentLocCount + recentCount;
+                        final place = _famousPlaces[index - famousStartIndex];
+                        return ListTile(
+                          leading: const Icon(
+                            Icons.star_rounded,
+                            color: colorWarning,
+                          ),
+                          title: Text(
+                            place['name'],
+                            style: const TextStyle(
+                              fontFamily: 'AvenirNext',
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          subtitle: const Text(
+                            "Popular destination",
+                            style: TextStyle(
+                              fontFamily: 'AvenirNext',
+                              fontSize: 12,
+                            ),
+                          ),
+                          onTap: () => Navigator.pop(context, {
                             'name': place['name'],
                             'latLng': place['latLng'],
-                          });
-                        },
-                      );
-                    } else {
-                      final place = _results[index];
-                      return ListTile(
-                        leading: const Icon(Icons.location_on, color: Colors.blue),
-                        title: Text(place['description']),
-                        onTap: () => _selectPlace(
-                          place['place_id'],
-                          place['description'],
-                        ),
-                      );
-                    }
-                  },
-                ),
-              ),
-            ),
-          ],
-        ),
+                          }),
+                        );
+                      } else {
+                        // 4. Search Results Section
+                        final place = _results[index];
+                        return ListTile(
+                          leading: const Icon(
+                            Icons.place_rounded,
+                            color: colorPrimaryMid,
+                          ),
+                          title: Text(
+                            place['description'],
+                            style: const TextStyle(
+                              fontFamily: 'AvenirNext',
+                              fontWeight: FontWeight.w500,
+                            ),
+                          ),
+                          subtitle: const Text(
+                            "Tap to select location",
+                            style: TextStyle(
+                              fontFamily: 'AvenirNext',
+                              fontSize: 12,
+                            ),
+                          ),
+                          onTap: () => _selectPlace(
+                            place['place_id'],
+                            place['description'],
+                          ),
+                        );
+                      }
+                    },
+                  ),
+          ),
+        ],
       ),
     );
   }

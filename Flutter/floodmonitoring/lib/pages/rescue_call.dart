@@ -1,6 +1,11 @@
+import 'dart:convert';
+
+import 'package:floodmonitoring/services/api_configs.dart';
+import 'package:floodmonitoring/utils/style.dart';
 import 'package:flutter/material.dart';
-import 'package:floodmonitoring/utils/style.dart'; // your color/style file
-import 'package:url_launcher/url_launcher.dart'; // to make calls
+import 'package:floodmonitoring/widgets/custom_app_bar.dart';
+import 'package:http/http.dart' as http;
+import 'package:url_launcher/url_launcher.dart';
 
 class RescueCall extends StatefulWidget {
   const RescueCall({super.key});
@@ -10,38 +15,119 @@ class RescueCall extends StatefulWidget {
 }
 
 class _RescueCallState extends State<RescueCall> {
-  // Example contacts
-  final List<Map<String, String>> emergencyContacts = [
+  // ========================================
+  // INITIALIZATION (initState)
+  // ========================================
+
+  @override
+  void initState() {
+    super.initState();
+    loadEmergencyContacts();
+  }
+
+  // ========================================
+  // STATE / VARIABLES
+  // ========================================
+
+  /// ----- EMERGENCY CONTACTS -----
+  List<Map<String, String>> emergencyContacts = [
     {
-      "name": "Local Rescue Unit",
-      "number": "09171234567",
-      "description": "Immediate flood response"
+      "name": "Manila DRRMO (Main)",
+      "number": "09507003710",
+      "description": "City-wide flood rescue & emergency response",
     },
     {
-      "name": "Fire Department",
-      "number": "101",
-      "description": "Emergency fire rescue"
+      "name": "Manila City Hall Action Center",
+      "number": "89271335",
+      "description": "General emergency & flood reports",
     },
     {
-      "name": "Police Station",
+      "name": "Philippine Red Cross (Manila)",
+      "number": "143",
+      "description": "Direct emergency hotline (Shortcode)",
+    },
+    {
+      "name": "MMDA Flood Control",
+      "number": "136",
+      "description": "Metro-wide flood monitoring & rescue",
+    },
+    {
+      "name": "BFP Manila (Fire/Rescue)",
+      "number": "85273627",
+      "description": "Bureau of Fire Protection - Manila District",
+    },
+    {
+      "name": "PNP Santa Mesa (Station 6)",
+      "number": "87160601",
+      "description": "Local police assistance in Santa Mesa",
+    },
+    {
+      "name": "National Emergency Hotline",
       "number": "911",
-      "description": "Law enforcement / assistance"
-    },
-    {
-      "name": "Hospital / Medical",
-      "number": "09221234567",
-      "description": "Medical emergencies"
+      "description": "Centralized emergency hotline",
     },
   ];
+
+  // ========================================
+  // LOGIC / HELPER FUNCTIONS
+  // ========================================
+
+  /// ----- LOAD EMERGENCY CONTACTS -----
+  Future<void> loadEmergencyContacts() async {
+    try {
+      var res = await http.get(Uri.parse(ApiConfig.emergencyContacts));
+      var response = jsonDecode(res.body);
+
+      if (res.statusCode == 200 && response["data"] != null) {
+        final data = response["data"];
+
+        setState(() {
+          emergencyContacts = List<Map<String, String>>.from(
+            data.map(
+              (item) => {
+                "name": item["name"].toString(),
+                "number": item["phone_number"].toString(),
+                "description": item["description"].toString(),
+              },
+            ),
+          );
+        });
+
+        print("Contacts updated: ${emergencyContacts.length} items loaded.");
+      } else {
+        print("API returned invalid response: ${response.toString()}");
+      }
+    } catch (e) {
+      print("Error fetching emergency contacts: $e");
+    }
+  }
+
+  /// ----- MAKE CALL FUNCTION-----
+  void _makeCall(String? number) async {
+    if (number == null) return;
+    final Uri callUri = Uri(scheme: 'tel', path: number);
+    if (await canLaunchUrl(callUri)) {
+      await launchUrl(callUri);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Cannot make a call at the moment.")),
+      );
+    }
+  }
+
+  // ========================================
+  // BUILD / CORE UI
+  // ========================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Emergency Contacts"),
-        backgroundColor: color1,
+      backgroundColor: Colors.grey[50],
+      appBar: CustomAppBar(
+        title: "Emergency Contacts",
+        backgroundColor: colorPrimary,
+        onBack: () => Navigator.pop(context),
       ),
-      backgroundColor: Colors.white,
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -50,30 +136,52 @@ class _RescueCallState extends State<RescueCall> {
             const SizedBox(height: 10),
             _header(),
             const SizedBox(height: 20),
-            ...emergencyContacts.map((contact) => _contactCard(contact)).toList(),
+            ...emergencyContacts
+                .map((contact) => _contactCard(contact))
+                .toList(),
           ],
         ),
       ),
     );
   }
 
-  // ----------------------------------------
+  // ========================================
   // UI WIDGETS
-  // ----------------------------------------
+  // ========================================
 
+  /// ----- HEADER -----
   Widget _header() {
     return Row(
       children: [
-        Icon(Icons.local_phone, color: Colors.deepOrange, size: 40),
-        const SizedBox(width: 10),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: colorPrimary.withOpacity(0.15),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Icon(Icons.local_phone, color: colorPrimary, size: 36),
+        ),
+        const SizedBox(width: 12),
         Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: const [
-              Text("Stay Safe!",
-                  style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
-              Text("Quick access to emergency contacts",
-                  style: TextStyle(color: Colors.black54)),
+              Text(
+                "Stay Safe!",
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  fontFamily: 'AvenirNext',
+                ),
+              ),
+              SizedBox(height: 2),
+              Text(
+                "Quick access to emergency contacts",
+                style: TextStyle(
+                  color: Colors.black54,
+                  fontFamily: 'AvenirNext',
+                ),
+              ),
             ],
           ),
         ),
@@ -81,6 +189,7 @@ class _RescueCallState extends State<RescueCall> {
     );
   }
 
+  /// ----- CONTACT CARD -----
   Widget _contactCard(Map<String, String> contact) {
     return Container(
       padding: const EdgeInsets.all(16),
@@ -95,45 +204,56 @@ class _RescueCallState extends State<RescueCall> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(contact['name'] ?? "",
-              style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Text(contact['description'] ?? "",
-              style: const TextStyle(fontSize: 15, color: Colors.black54)),
+          Text(
+            contact['name'] ?? "",
+            style: const TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              fontFamily: 'AvenirNext',
+            ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            contact['description'] ?? "",
+            style: const TextStyle(
+              fontSize: 15,
+              color: Colors.black54,
+              fontFamily: 'AvenirNext',
+            ),
+          ),
           const SizedBox(height: 12),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Text(contact['number'] ?? "",
-                  style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              Text(
+                contact['number'] ?? "",
+                style: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  fontFamily: 'AvenirNext',
+                ),
+              ),
               ElevatedButton.icon(
                 onPressed: () => _makeCall(contact['number']),
                 icon: const Icon(Icons.call, size: 18),
                 label: const Text("Call"),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: color1,
+                  backgroundColor: colorPrimary,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(10),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
                   ),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  elevation: 3,
                 ),
               ),
             ],
-          )
+          ),
         ],
       ),
     );
-  }
-
-  void _makeCall(String? number) async {
-    if (number == null) return;
-    final Uri callUri = Uri(scheme: 'tel', path: number);
-    if (await canLaunchUrl(callUri)) {
-      await launchUrl(callUri);
-    } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Cannot make a call at the moment.")),
-      );
-    }
   }
 }

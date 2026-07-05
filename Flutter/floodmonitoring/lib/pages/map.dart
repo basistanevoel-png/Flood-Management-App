@@ -5,12 +5,22 @@ import 'package:floodmonitoring/services/flood_level.dart';
 import 'package:floodmonitoring/services/global.dart';
 import 'package:floodmonitoring/services/location.dart';
 import 'package:floodmonitoring/services/polyline.dart';
+import 'package:floodmonitoring/services/sensor_service.dart';
+import 'package:floodmonitoring/services/threshold_service.dart';
 import 'package:floodmonitoring/services/url_tile_provider.dart';
 import 'package:floodmonitoring/services/weather.dart';
+import 'package:floodmonitoring/utils/converters.dart';
 import 'package:floodmonitoring/utils/style.dart';
+import 'package:floodmonitoring/widgets/alert_popup.dart';
+import 'package:floodmonitoring/widgets/map_info_cards.dart';
+import 'package:floodmonitoring/utils/vehicle_parser.dart';
+import 'package:floodmonitoring/widgets/map_settings_popup.dart';
 import 'package:floodmonitoring/widgets/search_popup.dart';
+import 'package:floodmonitoring/widgets/toast.dart';
 import 'package:floodmonitoring/widgets/vehicle_info_popup.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_compass/flutter_compass.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:delightful_toast/delight_toast.dart';
@@ -27,120 +37,334 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
+  // ========================================
+  // STATE / VARIABLES
+  // ========================================
+
   late GoogleMapController mapController;
 
-  // Example location (Antipolo)
-  final LatLng _center = const LatLng(14.6255, 121.1245);
+  final ThresholdService _thresholdService = ThresholdService();
+  final SensorService _sensorService = SensorService();
+
+  final LatLng _center = const LatLng(14.600775714641369, 121.00852660400322);
 
   final Set<Marker> _markers = {};
-
-  final blynk = BlynkService();
 
   Set<Circle> _circles = {};
   Set<Polyline> _polylines = {};
 
   CameraPosition? _lastPosition;
 
+  /// Direction Sheet
   bool showDirectionSheet = false;
-  bool showSensorSheet = false;
-  bool showSensorSettingsSheet = false;
-  bool showPinConfirmationSheet = false;
-  bool showRerouteConfirmationSheet = false;
-
   double directionSheetHeight = 0;
-  double sensorSheetHeight = 0;
-  double sensorSettingsSheetHeight = 0;
-  double pinConfirmationSheetHeight = 0;
-  double rerouteConfirmationSheetHeight = 0;
-
   double directionDragOffset = 0;
-  double sensorDragOffset = 0;
-  double sensorSettingsDragOffset = 0;
-  double pinConfirmationDragOffset = 0;
-  double rerouteConfirmationDragOffset = 0;
-
   final GlobalKey directionKey = GlobalKey();
+
+  /// Sensor Sheet
+  bool showSensorSheet = false;
+  double sensorSheetHeight = 0;
+  double sensorDragOffset = 0;
   final GlobalKey sensorKey = GlobalKey();
+
+  /// Sensor Settings Sheet
+  bool showSensorSettingsSheet = false;
+  double sensorSettingsSheetHeight = 0;
+  double sensorSettingsDragOffset = 0;
   final GlobalKey sensorSettingsKey = GlobalKey();
+
+  /// Pin Confirmation Sheet
+  bool showPinConfirmationSheet = false;
+  double pinConfirmationSheetHeight = 0;
+  double pinConfirmationDragOffset = 0;
   final GlobalKey pinConfirmKey = GlobalKey();
+
+  /// Reroute Confirmation Sheet
+  bool showRerouteConfirmationSheet = false;
+  double rerouteConfirmationSheetHeight = 0;
+  double rerouteConfirmationDragOffset = 0;
   final GlobalKey rerouteConfirmKey = GlobalKey();
 
-///New Added
+  /// Main Sheet
   bool showMainSheet = true;
   double mainSheetHeight = 0;
   double mainDragOffset = 0;
   final GlobalKey mainKey = GlobalKey();
 
-
+  /// Map Settings Sheet
   bool showAllSensors = true;
   bool showSensorCoverage = true;
   bool showCriticalSensors = false;
   bool showSensorLabels = false;
 
-
+  /// Alert and Routing
   bool insideAlertZone = false;
   bool nearAlertZone = false;
   bool normalRouting = true;
 
-
-///New
+  /// Weather variables
   String temperature = '';
   String weatherDescription = '';
   String iconCode = '';
 
+  /// Time
   String currentTime = '';
   Timer? _timer;
-
-  int fetchIntervalMinutes = 1;
+  int fetchIntervalMinutes = 5;
   int _secondsCounter = 0;
+
+  String tempSelectedVehicle = "";
+
+  LatLng? savedPinPosition;
+  Marker? savedPinMarker;
+
+  LatLng? tappedPosition;
+  Marker? tappedMarker;
+  Map<String, dynamic> currentPlace = {
+    "name": "",
+    "location": LatLng(0.0, 0.0),
+  };
+
+  /// Map Location Variables
+  LatLng? savedStartPosition;
+  Marker? savedStartMarker;
+
+  LatLng? startPosition;
+  Marker? startMarker;
+  Map<String, dynamic> startPlace = {"name": "", "location": LatLng(0.0, 0.0)};
+
+  Map<String, dynamic> savedPlace = {"name": "", "location": LatLng(0.0, 0.0)};
+
+  Map<String, dynamic> savedStartPlace = {
+    "name": "",
+    "location": LatLng(0.0, 0.0),
+  };
+
+  String? addressName;
+
+  int currentMenuCardPage = 0;
+
+  bool useOpenFreeMapStyle = false;
+  late PageController _carouselController;
+  Timer? _carouselTimer;
+  final int _carouselCardCount = 3;
+
+  // ========================================
+  // INITIALIZATION (initState)
+  // ========================================
 
   @override
   void initState() {
     super.initState();
+    _bootstrap();
+  }
 
-      setState(() {
-        selectedVehicle = "";
-      });
+  Future<void> _bootstrap() async {
+    selectedVehicle = "";
+    _updateTime();
 
-      ///Remove
-      // WidgetsBinding.instance.addPostFrameCallback((_) {
-      //   showVehicleModal();
-      // });
+    final pos = await LocationService.getCurrentLocation(context);
+    if (pos == null) return;
 
-      fetchDataForAllSensors();
-      _loadCurrentLocation();
-      _updateTime();
-      //_drawAvoidZones();
-      //startLocationUpdates();
+    await _initializeEverything();
 
-      _timer = Timer.periodic(Duration(seconds: 1), (timer) {
-        _updateTime();
+    _startTimer();
+    startLocationUpdates();
+  }
 
-        _secondsCounter++;
+  @override
+  void dispose() {
+    _carouselTimer?.cancel();
+    _carouselController.dispose();
 
-        if (_secondsCounter >= fetchIntervalMinutes * 60) {
-          fetchDataForAllSensors();
-          _secondsCounter = 0;
-        }
+    _positionStream?.cancel();
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  // ========================================
+  // STATE / VARIABLES
+  // ========================================
+
+  /// ----- Initialize Everything -----
+  Future<void> _initializeEverything() async {
+    loadSensors();
+    _loadThresholds();
+    fetchDataForAllSensors();
+
+    await _loadMarkerIcon();
+
+    await _loadCurrentLocation();
+
+    if (mounted) {
+      _addUserMarker();
+
+      // Delayed init
+      Future.delayed(const Duration(seconds: 2), () {
+        if (mounted) _initCompass();
       });
     }
+
+    _carouselController = PageController(initialPage: 0);
+    _startCarouselTimer();
+  }
+
+  /// ----- START TIMER -----
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+
+      _updateTime();
+      _secondsCounter++;
+
+      if (_secondsCounter >= fetchIntervalMinutes * 60) {
+        fetchDataForAllSensors();
+        _secondsCounter = 0;
+      }
+    });
+  }
+
+  /// ----- LOAD SENSORS-----
+  Future<void> loadSensors() async {
+    var tempSensors = await _sensorService.loadSensorsList();
+
+    setState(() {
+      sensors = tempSensors;
+      _buildSensorMarkers();
+    });
+  }
+
+  /// ----- LOAD THRESHOLD -----
+  Future<void> _loadThresholds() async {
+    List<Map<String, dynamic>> data = await _thresholdService
+        .loadThresholdsList();
+
+    setState(() {
+      vehicleFloodThresholds = data;
+    });
+  }
+
+  /// ----- START CAROUSEL TIMER -----
+  void _startCarouselTimer() {
+    _carouselTimer?.cancel();
+    _carouselTimer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      if (!mounted) return;
+
+      int nextPage = currentMenuCardPage + 1;
+      if (nextPage >= _carouselCardCount) {
+        nextPage = 0; // Loop back to the first card
+      }
+
+      _carouselController.animateToPage(
+        nextPage,
+        duration: const Duration(milliseconds: 400),
+        curve: Curves.easeInOut,
+      );
+    });
+  }
+
+  /// ----- BUILD SENSOR MAKERS -----
+  Future<void> _buildSensorMarkers() async {
+    _removeAllSensorMarkers();
+
+    final Map<String, String> iconPaths = {
+      'Safe': 'assets/images/sensor_location_safe.png',
+      'Warning': 'assets/images/sensor_location_warning.png',
+      'Danger': 'assets/images/sensor_location_danger.png',
+      'Default': 'assets/images/sensor_location.png',
+    };
+
+    Map<String, BitmapDescriptor> loadedIcons = {};
+
+    for (var entry in iconPaths.entries) {
+      loadedIcons[entry.key] = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(48, 48)),
+        entry.value,
+      );
+    }
+    setState(() {
+      sensors.forEach((id, sensor) {
+        BitmapDescriptor currentIcon;
+
+        if (selectedVehicle == '') {
+          currentIcon = loadedIcons['Default']!;
+        } else {
+          final String status = sensor['sensorData']?['status'] ?? 'Default';
+          currentIcon = loadedIcons[status] ?? loadedIcons['Default']!;
+        }
+
+        _markers.add(
+          Marker(
+            markerId: MarkerId(id),
+            position: sensor['position'],
+            icon: currentIcon,
+            anchor: const Offset(0.5, 0.5),
+            onTap: () => _onSensorTap(id, sensor),
+            zIndex: 2,
+          ),
+        );
+
+        if (showSensorCoverage) {
+          final Color statusColor = _getStatusColor(
+            sensor['sensorData']?['forecastedStatus'] ?? 'Safe',
+          );
+
+          _circles.removeWhere((c) => c.circleId.value == '${id}_circle');
+
+          _circles.add(
+            Circle(
+              circleId: CircleId('${id}_circle'),
+              center: sensor['position'],
+              radius: (sensor['radius'] as num).toDouble(),
+              strokeWidth: 2,
+              strokeColor: statusColor,
+              fillColor: statusColor.withOpacity(0.3),
+            ),
+          );
+        }
+      });
+    });
+  }
+
+  /// ----- REMOVE ALL SENSOR MARKERS -----
+  void _removeAllSensorMarkers() {
+    setState(() {
+      _markers.removeWhere(
+        (marker) => marker.markerId.value.startsWith('sensor_'),
+      );
+    });
+  }
 
   Position? _lastUpdatedPosition;
   StreamSubscription<Position>? _positionStream;
 
+  /// ----- LOAD CURRENT LOCATION -----
   Future<void> _loadCurrentLocation() async {
-    Position? position = await LocationService.getCurrentLocation();
-    if (position != null) {
-      setState(() {
-        currentPosition = position;
-      });
-      getWeather();
+    Position? lastKnown = await Geolocator.getLastKnownPosition();
+
+    if (lastKnown != null && mounted) {
+      setState(() => currentPosition = lastKnown);
       _addUserMarker();
-    } else {
-      print('Could not get location.');
+      getWeather();
+    }
+
+    try {
+      Position freshPosition = await Geolocator.getCurrentPosition(
+        desiredAccuracy: LocationAccuracy.high,
+        timeLimit: const Duration(seconds: 5),
+      );
+
+      if (mounted) {
+        setState(() => currentPosition = freshPosition);
+        _addUserMarker();
+        getWeather();
+      }
+    } catch (e) {
+      print('Fresh location timeout or error: $e');
     }
   }
 
+  /// ----- UPDATE TIME -----
   void _updateTime() {
     final now = DateTime.now();
     final formattedTime = DateFormat('hh:mm a').format(now);
@@ -150,9 +374,12 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-
+  /// ----- GET WEATHER -----
   void getWeather() async {
-    final weather = await loadWeather(currentPosition!.latitude, currentPosition!.longitude);
+    final weather = await loadWeather(
+      currentPosition!.latitude,
+      currentPosition!.longitude,
+    );
 
     if (weather != null) {
       setState(() {
@@ -163,88 +390,156 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
-
-
-
+  /// ----- START LOCATION UPDATES -----
   void startLocationUpdates() {
     const LocationSettings locationSettings = LocationSettings(
       accuracy: LocationAccuracy.high,
-      distanceFilter: 1, // minimum distance in meters to trigger update
+      distanceFilter: 1,
     );
 
-    _positionStream = Geolocator.getPositionStream(locationSettings: locationSettings)
-        .listen((Position position) {
-      if (_lastUpdatedPosition == null) {
-        _updatePosition(position);
-      } else {
-        double distance = Geolocator.distanceBetween(
-          _lastUpdatedPosition!.latitude,
-          _lastUpdatedPosition!.longitude,
-          position.latitude,
-          position.longitude,
+    _positionStream =
+        Geolocator.getPositionStream(locationSettings: locationSettings).listen(
+          (Position position) {
+            _updatePosition(position);
+          },
         );
+  }
 
-        if (distance >= 1) { // update every 5 meters
-          _updatePosition(position);
-        }
+  double routeDistanceThreshold = 25.0;
+
+  bool _checkUserClosestDistanceToRoute() {
+    int closestIndex = 0;
+    double closestDistance = double.infinity;
+
+    for (int i = 0; i < route.length; i++) {
+      double distance = Geolocator.distanceBetween(
+        currentPosition!.latitude,
+        currentPosition!.longitude,
+        route[i].latitude,
+        route[i].longitude,
+      );
+
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = i;
       }
-    });
+    }
+
+    if (closestDistance >= routeDistanceThreshold) {
+      return true;
+    }
+    return false;
   }
 
-  @override
-  void dispose() {
-    _positionStream?.cancel();
-    _timer?.cancel();
-    super.dispose();
-  }
+  /// ----- UPDATE POSITION -----
+  void _updatePosition(Position position) async {
+    LatLng rawLatLng = LatLng(position.latitude, position.longitude);
 
+    LatLng userLatLng = rawLatLng;
+    LocationService.updateSpeed(position);
 
-  void _updatePosition(Position position) {
     setState(() {
       currentPosition = position;
-      _lastUpdatedPosition = position;
+
+      if (route.isNotEmpty) {
+        userTooFar = _checkUserClosestDistanceToRoute();
+      }
     });
 
     _addUserMarker();
 
-    LatLng userLatLng = LatLng(
-      position.latitude,
-      position.longitude,
-    );
+    setState(() {
+      currentPosition = Position(
+        latitude: userLatLng.latitude,
+        longitude: userLatLng.longitude,
+        timestamp: position.timestamp,
+        accuracy: position.accuracy,
+        altitude: position.altitude,
+        heading: position.heading,
+        speed: position.speed,
+        speedAccuracy: position.speedAccuracy,
+        altitudeAccuracy: position.altitudeAccuracy,
+        headingAccuracy: position.headingAccuracy,
+      );
+    });
+
+    _addUserMarker();
+
+    if (savedStartPosition == null &&
+        savedPinPosition != null &&
+        tappedPosition == null &&
+        startPosition == null) {
+      _drawRoute(userLatLng, savedPinPosition!);
+    }
 
     final avoidZones = buildAvoidZonesFromSensors();
     bool inside = isInsideAvoidZone(userLatLng, avoidZones);
-    bool near = isNearAvoidZone(userLatLng, avoidZones);
-
-    if (inside) {
-      print("Position inside restricted area!");
-    } else {
-      print("Safe: Position outside avoid zones.");
-    }
-
+    bool near = await isNearAvoidZone(userLatLng, avoidZones);
 
     if (near) {
-      print("Position near restricted area!");
-      setState(() {
-        startAlert();
-      });
+      startAlert();
     } else {
-      print("Safe: Position far avoid zones.");
       stopAlert();
     }
+
+    if (inside) {
+      insideFloodZone();
+    } else {
+      outsideFloodZone();
+    }
+  }
+
+  LatLng? _smoothedLatLng;
+
+  /// ----- SMOOTH POSITION -----
+  LatLng smoothPosition(LatLng newPosition) {
+    const double smoothFactor = 0.2;
+
+    if (_smoothedLatLng == null) {
+      _smoothedLatLng = newPosition;
+      return newPosition;
+    }
+
+    final lat =
+        _smoothedLatLng!.latitude +
+        (newPosition.latitude - _smoothedLatLng!.latitude) * smoothFactor;
+
+    final lng =
+        _smoothedLatLng!.longitude +
+        (newPosition.longitude - _smoothedLatLng!.longitude) * smoothFactor;
+
+    _smoothedLatLng = LatLng(lat, lng);
+
+    return _smoothedLatLng!;
+  }
+
+  void insideFloodZone() {
+    if (selectedVehicle.isEmpty) return;
+    if (!insideAlertZone) {
+      showAlertModal(context);
+      setState(() {
+        insideAlertZone = true;
+      });
+    }
+  }
+
+  void outsideFloodZone() {
+    setState(() {
+      insideAlertZone = false;
+    });
   }
 
   bool displayAlert = false;
   Timer? _alertTimer;
 
-
+  /// ----- START ALERT -----
   void startAlert() {
+    if (selectedVehicle.isEmpty) return;
     if (!nearAlertZone) {
       nearAlertZone = true;
       showNearFloodAlertToast(context);
       Vibration.vibrate(duration: 100, amplitude: 255);
 
-      // Blink alert
       _alertTimer = Timer.periodic(const Duration(milliseconds: 500), (timer) {
         if (!nearAlertZone) {
           timer.cancel();
@@ -255,13 +550,13 @@ class _MapScreenState extends State<MapScreen> {
         }
       });
 
-      // Auto stop after 5 minutes
       Future.delayed(const Duration(minutes: 5), () {
         stopAlert();
       });
     }
   }
 
+  /// ----- STOP ALERT -----
   void stopAlert() {
     nearAlertZone = false;
     _alertTimer?.cancel();
@@ -271,102 +566,84 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-
-
-  Map<String, Map<String, dynamic>> sensors = {
-  };
-
   String? selectedSensorId;
 
-  /// Get Update For Specific Sensor
+  /// ----- FETCH DATA FOR SENSOR -----
   Future<void> fetchDataForSensor(String sensorId) async {
-    final sensor = sensors[sensorId];
-    if (sensor == null) return;
+    if (sensorId.isEmpty) return;
 
-    final String token = sensor['token'];
-    final String pin = sensor['pin']; // ✅ NEW
-
-    final data = await BlynkService().fetchDistance(token, pin);
+    final data = await FloodLevel.fetchLatestSensorData(sensorId);
 
     setState(() {
       sensors[sensorId]!['sensorData'] = data;
     });
-
-    print("Updated sensor $sensorId → $data");
   }
 
-  /// Get Update For All Sensors
   Future<void> fetchDataForAllSensors() async {
-    print("fetchDataForAllSensors");
+    final updates = <String, dynamic>{};
 
-    List<Future<void>> futures = [];
+    await Future.wait(
+      sensors.keys.map((sensorId) async {
+        final data = await FloodLevel.fetchLatestSensorData(sensorId);
+        updates[sensorId] = data;
+      }),
+    );
 
-    sensors.forEach((sensorId, sensor) {
-      final String token = sensor['token'];
-      final String pin = sensor['pin']; // ✅ NEW
-
-      futures.add(
-        BlynkService().fetchDistance(token, pin).then((data) {
-          setState(() {
-            sensors[sensorId]!['sensorData'] = data;
-          });
-
-          print("Updated sensor $sensorId ($pin)");
-        }),
-      );
-    });
-
-    await Future.wait(futures);
-
-    print("All sensors updated");
-  }
-
-
-
-  void _onMapCreated(GoogleMapController controller) {
-    mapController = controller;
-
-    setState(() async {
-      _markers.clear(); // Optional: clear previous markers
-
-      // Load custom sensor marker image once
-      final BitmapDescriptor sensorIcon = await BitmapDescriptor.fromAssetImage(
-        const ImageConfiguration(size: Size(48, 48)), // size of your sensor image
-        'assets/images/sensor_location.png',
-      );
-
-      sensors.forEach((id, sensor) {
-        _markers.add(
-          Marker(
-            markerId: MarkerId(id),
-            position: sensor['position'],
-            icon: sensorIcon, // <-- use custom sensor image
-            infoWindow: showSensorLabels ? InfoWindow(title: id) : InfoWindow.noText,
-            anchor: const Offset(0.5, 0.5),
-              onTap: () => _onSensorTap(id, sensor),
-          ),
-        );
+    setState(() {
+      updates.forEach((sensorId, data) {
+        sensors[sensorId]!['sensorData'] = data;
       });
     });
+
+    _refreshSensorMarkers();
   }
 
+  /// ----- ON MAP CREATED -----
+  void _onMapCreated(GoogleMapController controller) async {
+    mapController = controller;
 
+    final BitmapDescriptor sensorIcon = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(size: Size(48, 48)),
+      'assets/images/sensor_location.png',
+    );
 
+    Set<Marker> newMarkers = {};
+
+    sensors.forEach((id, sensor) {
+      newMarkers.add(
+        Marker(
+          markerId: MarkerId(id),
+          position: sensor['position'],
+          icon: sensorIcon,
+          infoWindow: showSensorLabels
+              ? InfoWindow(title: id)
+              : InfoWindow.noText,
+          anchor: const Offset(0.5, 0.5),
+          onTap: () => _onSensorTap(id, sensor),
+          zIndex: 2,
+        ),
+      );
+    });
+
+    setState(() {
+      _markers.clear();
+      _markers.addAll(newMarkers);
+    });
+  }
+
+  /// ----- OFFSET POSITION -----
   LatLng _offsetPosition(LatLng original, double offsetInDegrees) {
     return LatLng(original.latitude - offsetInDegrees, original.longitude);
   }
 
-  ///Sensor Gets Tapped
+  /// ----- ON SENSOR TAP -----
   Future<void> _onSensorTap(String id, Map<String, dynamic> sensor) async {
     final LatLng sensorPos = sensor['position'];
     final LatLng offsetTarget = _offsetPosition(sensorPos, 0.0090);
 
     mapController.animateCamera(
       CameraUpdate.newCameraPosition(
-        CameraPosition(
-          target: offsetTarget,
-          zoom: 15,
-        ),
+        CameraPosition(target: offsetTarget, zoom: 15),
       ),
     );
 
@@ -376,111 +653,200 @@ class _MapScreenState extends State<MapScreen> {
       selectedSensorId = id;
       showDirectionSheet = false;
       showSensorSettingsSheet = false;
+      showMainSheet = false;
 
       cancelPinSelection();
 
       showSensorSheet = true;
     });
 
-    // Update circle for the selected sensor
     if (showSensorCoverage) {
       _circles.removeWhere((c) => c.circleId.value.startsWith(id));
+
+      final Color statusColor = _getStatusColor(
+        sensor['sensorData']['forecastedStatus'],
+      );
+
       _circles.add(
         Circle(
           circleId: CircleId('${id}_circle'),
           center: sensor['position'],
-          radius: 100,
+          radius: sensor['radius'],
           strokeWidth: 2,
-          strokeColor: _getStatusColor(sensor['sensorData']['status']),
-          fillColor: _getStatusColor(sensor['sensorData']['status']).withOpacity(0.3),
+          strokeColor: statusColor,
+          fillColor: statusColor.withOpacity(0.3),
         ),
       );
     }
-
   }
 
+  /// ----- GET STATUS COLOR -----
   Color _getStatusColor(String status) {
+    if (selectedVehicle.isEmpty) {
+      return Colors.black;
+    }
+
     switch (status) {
       case "Safe":
-        return color_safe;
+        return colorSafe;
       case "Warning":
-        return color_warning;
+        return colorWarning;
       case "Danger":
-        return color_danger;
+        return colorDanger;
       default:
         return Colors.black;
     }
   }
 
-  /// Add Users Marker
+  double _userHeading = 0;
+  double _lastUpdateHeading = 0;
+  double _mapBearing = 0.0;
+
+  BitmapDescriptor? userIcon;
+
+  /// ----- LOAD MARKER ICON -----
+  Future<void> _loadMarkerIcon() async {
+    userIcon = await BitmapDescriptor.fromAssetImage(
+      const ImageConfiguration(size: Size(48, 48)),
+      'assets/images/user_location.png',
+    );
+  }
+
+  /// ----- INIT COMPASS -----
+  void _initCompass() {
+    FlutterCompass.events?.listen((CompassEvent event) {
+      double? currentHeading = event.heading;
+      if (currentHeading == null) return;
+
+      // Use the raw heading. Do NOT subtract _mapBearing.
+      if ((currentHeading - _lastUpdateHeading).abs() > 2) {
+        if (mounted) {
+          _userHeading = currentHeading; // Raw compass value
+          _lastUpdateHeading = currentHeading;
+          _addUserMarker();
+        }
+      }
+    });
+  }
+
+  /// ----- ADD USER MARKER -----
   void _addUserMarker() async {
-    if (currentPosition == null) return;
+    if (currentPosition == null || userIcon == null) return;
 
     final userLatLng = LatLng(
       currentPosition!.latitude,
       currentPosition!.longitude,
     );
 
-    // Load custom image as marker
-    final BitmapDescriptor userIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(48, 48)), // size of your pin
-      'assets/images/user_location.png',
-    );
+    double dynamicBuffer = await LocationService.getAvoidZoneBuffer();
 
     setState(() {
-      // Remove old user marker
-      _markers.removeWhere((m) => m.markerId.value == 'user');
-
-      // Remove old circles (optional)
-      _circles.removeWhere((c) =>
-      c.circleId.value == 'user_small' || c.circleId.value == 'user_medium');
-
-      // Add user marker with custom image
       _markers.add(
         Marker(
           markerId: const MarkerId('user'),
           position: userLatLng,
-          icon: userIcon, // <-- custom image
+          icon: userIcon!,
           anchor: const Offset(0.5, 0.5),
-          infoWindow: const InfoWindow(title: 'Your Location'),
+          rotation: _userHeading,
+          flat: true,
+          zIndex: 2,
+        ),
+      );
+
+      _circles.removeWhere((c) => c.circleId.value == 'user_glow');
+
+      _circles.add(
+        Circle(
+          circleId: const CircleId('user_glow'),
+          center: userLatLng,
+          radius: dynamicBuffer,
+          fillColor: Colors.blue.withOpacity(0.10),
+          strokeColor: Colors.transparent,
+          strokeWidth: 0,
+          zIndex: 1,
         ),
       );
     });
   }
 
-
-
+  /// ----- REFRESH SENSOR MARKERS -----
   void _refreshSensorMarkers() async {
-    final BitmapDescriptor sensorIcon = await BitmapDescriptor.fromAssetImage(
-      const ImageConfiguration(size: Size(48, 48)),
-      'assets/images/sensor_location.png',
-    );
+    // Clear existing sensor markers first
+    _removeAllSensorMarkers();
+
+    final Map<String, String> iconPaths = {
+      'Safe': 'assets/images/sensor_location_safe.png',
+      'Warning': 'assets/images/sensor_location_warning.png',
+      'Danger': 'assets/images/sensor_location_danger.png',
+      'Default': 'assets/images/sensor_location.png',
+    };
+
+    Map<String, BitmapDescriptor> loadedIcons = {};
+
+    for (var entry in iconPaths.entries) {
+      loadedIcons[entry.key] = await BitmapDescriptor.fromAssetImage(
+        const ImageConfiguration(size: Size(48, 48)),
+        entry.value,
+      );
+    }
 
     setState(() {
-      // Remove all sensors first
-      _markers.removeWhere((m) => sensors.containsKey(m.markerId.value));
-
-      // If showAllSensors == false → stop here (no markers added)
+      // Basic visibility toggle
       if (!showAllSensors) return;
 
-      // Otherwise add all sensors again
       sensors.forEach((id, sensor) {
+        final String status = sensor['sensorData']?['status'] ?? 'Default';
+
+        if (showCriticalSensors) {
+          if (status != 'Warning' && status != 'Danger') {
+            return;
+          }
+        }
+
+        BitmapDescriptor currentIcon;
+        if (selectedVehicle == '') {
+          currentIcon = loadedIcons['Default']!;
+        } else {
+          currentIcon = loadedIcons[status] ?? loadedIcons['Default']!;
+        }
+
+        final String uniqueId = showSensorLabels ? "${id}_labeled" : id;
+
         _markers.add(
           Marker(
-            markerId: MarkerId(id),
+            markerId: MarkerId(uniqueId),
             position: sensor['position'],
-            icon: sensorIcon,
+            icon: currentIcon,
             anchor: const Offset(0.5, 0.5),
-            infoWindow: showSensorLabels ? InfoWindow(title: id) : InfoWindow.noText,
+            infoWindow: showSensorLabels
+                ? InfoWindow(title: id)
+                : InfoWindow.noText,
             onTap: () => _onSensorTap(id, sensor),
+            zIndex: 2,
           ),
         );
+
+        if (showSensorCoverage && showAllSensors) {
+          final Color statusColor = _getStatusColor(
+            sensor['sensorData']?['forecastedStatus'] ?? 'Safe',
+          );
+
+          _circles.add(
+            Circle(
+              circleId: CircleId('${id}_circle'),
+              center: sensor['position'],
+              radius: (sensor['radius'] as num).toDouble(),
+              strokeWidth: 2,
+              strokeColor: statusColor,
+              fillColor: statusColor.withOpacity(0.3),
+            ),
+          );
+        }
       });
     });
   }
 
-
-  /// Locate user
+  /// ----- GO TO USER -----
   void _goToUser() async {
     if (currentPosition == null) return;
 
@@ -503,11 +869,13 @@ class _MapScreenState extends State<MapScreen> {
 
   bool _isZoomedTilted = false;
 
-  /// Reset map orientation (bearing & tilt)
+  /// ----- ON CAMERA MOVE -----
   void _onCameraMove(CameraPosition position) {
     _lastPosition = position;
+    _mapBearing = position.bearing;
   }
 
+  /// ----- RESET ORIENTATION -----
   void _resetOrientation() async {
     if (_lastPosition == null) return;
 
@@ -552,8 +920,15 @@ class _MapScreenState extends State<MapScreen> {
     _isZoomedTilted = !_isZoomedTilted;
   }
 
-
-  void showAppToast(BuildContext context, {required String message, required String status, double? distance,}) {Color bgColor; IconData icon;
+  /// ----- SHOW SELECT VEHICLE TOAST -----
+  void showAppToast(
+    BuildContext context, {
+    required String message,
+    required String status,
+    double? distance,
+  }) {
+    Color bgColor;
+    IconData icon;
 
     switch (status.toLowerCase()) {
       case 'safe':
@@ -595,107 +970,89 @@ class _MapScreenState extends State<MapScreen> {
     ).show(context);
   }
 
-  LatLng? savedPinPosition;        // the CURRENT official pin
-  Marker? savedPinMarker;          // marker for the official pin
-  Map<String, dynamic> savedPlace = {
-    "name": "",
-    "location": LatLng(0.0, 0.0),
-  };
-
-  LatLng? tappedPosition;          // temporary pin when user taps on map
-  Marker? tappedMarker;
-  Map<String, dynamic> currentPlace = {
-    "name": "",
-    "location": LatLng(0.0, 0.0),
-  };
-
+  /// ----- ON MAP TAP -----
   void _onMapTap(LatLng position) async {
-
-    if (selectedVehicle.isEmpty || showMainSheet) {
-      print("No vehicle selected. Tap ignored.");
+    if (selectedVehicle.isEmpty) {
+      showSelectVehicleToast(context);
+      showSensorSheet = false;
+      showMainSheet = true;
+      _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
       return;
+    } else {
+      setState(() {
+        showMainSheet = false;
+      });
     }
-
-    print("Saved Pin: ${savedPinPosition?.latitude}, ${savedPinPosition?.longitude}");
-    print("User: ${currentPosition!.latitude}, ${currentPosition!.longitude}");
 
     final BitmapDescriptor pinIcon = await BitmapDescriptor.fromAssetImage(
       const ImageConfiguration(size: Size(48, 48)),
       'assets/images/selected_location.png',
     );
 
-    setState(() {
-      // Remove previous tapped marker
-      if (tappedMarker != null) _markers.remove(tappedMarker);
+    if (settingPin) {
+      setState(() {
+        searchEndLocation = true;
+        // Remove previous tapped marker
+        if (tappedMarker != null) _markers.remove(tappedMarker);
 
-      // Add new tapped marker
-      tappedMarker = Marker(
-        markerId: const MarkerId('tapped_pin'),
-        position: position,
-        icon: pinIcon,
-        anchor: const Offset(0.5, 1.0),
-      );
-      _markers.add(tappedMarker!);
+        // Add new tapped marker
+        tappedMarker = Marker(
+          markerId: const MarkerId('tapped_pin'),
+          position: position,
+          icon: pinIcon,
+          anchor: const Offset(0.5, 1.0),
+          zIndex: 2,
+        );
+        _markers.add(tappedMarker!);
 
-      // Update currentPlace
-      currentPlace = {
-        "name": "",        // leave empty since user just tapped
-        "location": position,
-      };
-      tappedPosition = position;
+        // Update currentPlace
+        currentPlace = {
+          "name": "", // leave empty since user just tapped
+          "location": position,
+        };
+        tappedPosition = position;
 
-      // Show confirmation sheet
-      showPinConfirmationSheet = true;
-      showDirectionSheet = false;
-      showSensorSheet = false;
-      showSensorSettingsSheet = false;
-      showRerouteConfirmationSheet = false;
-    });
+        // Show confirmation sheet
+        showPinConfirmationSheet = true;
+        showDirectionSheet = false;
+        showSensorSheet = false;
+        showSensorSettingsSheet = false;
+        showRerouteConfirmationSheet = false;
+        _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+      });
 
-    // Draw polyline from user to tapped pin
-    if (currentPosition != null) {
-      _drawRoute(
-        LatLng(currentPosition!.latitude, currentPosition!.longitude),
-        position, // use the tapped location
-      );
+      if (savedStartPosition != null) {
+        _drawRoute(savedStartPosition!, position);
+      } else {
+        // Draw polyline from user to tapped pin
+        if (currentPosition != null) {
+          _drawRoute(
+            LatLng(currentPosition!.latitude, currentPosition!.longitude),
+            position, // use the tapped location
+          );
+        }
+      }
     }
 
-    // LatLng tap = tappedPosition!;
-    // bool inside = isInsideAvoidZone(tap, avoidZones);
-    //
-    // if (inside) {
-    //   print("Tapped inside restricted area!");
-    //   setState(() {
-    //     insideAlertZone = true;
-    //   });
-    // } else {
-    //   print("Safe: tapped outside avoid zones.");
-    //   setState(() {
-    //     insideAlertZone = false;
-    //   });
-    // }
+    if (testingMode) {
+      Position fakePosition = Position(
+        latitude: position.latitude,
+        longitude: position.longitude,
+        timestamp: DateTime.now(),
+        accuracy: 1,
+        altitude: 0,
+        altitudeAccuracy: 1,
+        heading: 0,
+        headingAccuracy: 1,
+        speed: 0,
+        speedAccuracy: 1,
+      );
 
-
-    Position fakePosition = Position(
-      latitude: position.latitude,
-      longitude: position.longitude,
-      timestamp: DateTime.now(),
-      accuracy: 1,
-      altitude: 0,
-      altitudeAccuracy: 1,
-      heading: 0,
-      headingAccuracy: 1,
-      speed: 0,
-      speedAccuracy: 1,
-    );
-
-    _updatePosition(fakePosition);
-
-
-
-
+      _updatePosition(fakePosition);
+    }
   }
 
+  /// ----- CANCEL PIN SELECTION -----
   void cancelPinSelection() {
     setState(() {
       // Remove temporary tapped pin
@@ -706,14 +1063,26 @@ class _MapScreenState extends State<MapScreen> {
       tappedPosition = null;
 
       // Clear temporary/current place
-      currentPlace = {
-        "name": "",
-        "location": LatLng(0.0, 0.0),
-      };
+      currentPlace = {"name": "", "location": LatLng(0.0, 0.0)};
+
+      // Remove temporary start pin
+      if (startMarker != null) {
+        _markers.remove(startMarker);
+      }
+      startMarker = null;
+      startPosition = null;
+
+      // Clear temporary start place
+      startPlace = {"name": "", "location": LatLng(0.0, 0.0)};
     });
 
-    // Restore saved pin → draw route again if exists
-    if (savedPinMarker != null && currentPosition != null) {
+    if (savedStartPosition != null && savedPinPosition == null) {
+      setState(() {
+        _polylines.clear();
+      });
+    } else if (savedStartPosition != null && savedPinPosition != null) {
+      _drawRoute(savedStartPosition!, savedPinPosition!);
+    } else if (savedPinMarker != null && currentPosition != null) {
       _drawRoute(
         LatLng(currentPosition!.latitude, currentPosition!.longitude),
         savedPinMarker!.position,
@@ -731,43 +1100,11 @@ class _MapScreenState extends State<MapScreen> {
     });
   }
 
-
-  // Set<Polygon> _polygons = {};
-  // void _drawAvoidZones() {
-  //   Set<Polygon> polygons = {};
-  //
-  //   for (int i = 0; i < avoidZones.length; i++) {
-  //     final zone = avoidZones[i];
-  //
-  //     final center = zone["position"] as LatLng;
-  //     final radius = zone["radius"] as double;
-  //
-  //     // Convert radius in meters to approximate degrees
-  //     final delta = radius / 111000;
-  //
-  //     // Square corners (clockwise)
-  //     final topLeft = LatLng(center.latitude + delta, center.longitude - delta); // A
-  //     final topRight = LatLng(center.latitude + delta, center.longitude + delta); // B
-  //     final bottomRight = LatLng(center.latitude - delta, center.longitude + delta); // C
-  //     final bottomLeft = LatLng(center.latitude - delta, center.longitude - delta); // D
-  //
-  //     final points = [topLeft, topRight, bottomRight, bottomLeft, topLeft]; // close the polygon
-  //
-  //     polygons.add(Polygon(
-  //       polygonId: PolygonId("avoid_zone_$i"),
-  //       points: points,
-  //       fillColor: Colors.red.withOpacity(0.3),
-  //       strokeColor: Colors.red,
-  //       strokeWidth: 2,
-  //     ));
-  //   }
-  //
-  //   setState(() {
-  //     _polygons = polygons;
-  //   });
-  // }
-
-  bool isInsideAvoidZone(LatLng usersPosition, List<Map<String, dynamic>> avoidZones) {
+  /// ----- IS INSIDE AVOID ZONE -----
+  bool isInsideAvoidZone(
+    LatLng usersPosition,
+    List<Map<String, dynamic>> avoidZones,
+  ) {
     for (var zone in avoidZones) {
       LatLng zoneCenter = zone["position"];
       double radius = zone["radius"]; // in meters
@@ -786,7 +1123,11 @@ class _MapScreenState extends State<MapScreen> {
     return false; // not inside any zone
   }
 
-  bool isNearAvoidZone(LatLng usersPosition, List<Map<String, dynamic>> avoidZones) {
+  /// ----- IS NEAR AVOID ZONE -----
+  Future<bool> isNearAvoidZone(
+    LatLng usersPosition,
+    List<Map<String, dynamic>> avoidZones,
+  ) async {
     for (var zone in avoidZones) {
       LatLng zoneCenter = zone["position"];
       double radius = zone["radius"]; // in meters
@@ -798,179 +1139,108 @@ class _MapScreenState extends State<MapScreen> {
         zoneCenter.longitude,
       );
 
-      if (distance <= radius + 500) {
-        return true; // near this zone
+      double dynamicBuffer = await LocationService.getAvoidZoneBuffer();
+
+      if (distance <= radius + dynamicBuffer) {
+        return true;
       }
     }
-    return false; // far any zone
+    return false;
   }
 
-  List<LatLng> _generateCirclePolygon(LatLng center, double radius, int points) {
-    List<LatLng> polygonPoints = [];
-    final R = 6371000; // Earth radius in meters
-    final dRad = radius / R;
-
-    for (int i = 0; i < points; i++) {
-      final theta = 2 * pi * i / points;
-      final lat = asin(sin(center.latitude * pi / 180) * cos(dRad) +
-          cos(center.latitude * pi / 180) * sin(dRad) * cos(theta)) *
-          180 /
-          pi;
-      final lng = center.longitude +
-          atan2(sin(theta) * sin(dRad) * cos(center.latitude * pi / 180),
-              cos(dRad) - sin(center.latitude * pi / 180) * sin(lat * pi / 180)) *
-              180 /
-              pi;
-      polygonPoints.add(LatLng(lat, lng));
-    }
-
-    return polygonPoints;
-  }
-
-
-
-
-
+  /// ----- BUILD AVOID ZONES FROM SENSORS -----
   List<Map<String, dynamic>> buildAvoidZonesFromSensors() {
     List<Map<String, dynamic>> zones = [];
 
     sensors.forEach((sensorId, sensor) {
       final sensorData = sensor['sensorData'];
-      final status = sensorData?['status'];
+      final status = sensorData?['forecastedStatus'];
 
       if (status == 'Warning' || status == 'Danger') {
-        zones.add({
-          "position": sensor['position'],
-          "radius": sensor['radius'], // from sensor config
-        });
-
+        zones.add({"position": sensor['position'], "radius": sensor['radius']});
       }
     });
 
     return zones;
   }
 
+  // Routing Variables
+  bool userTooFar = false;
+  bool isRerouting = false;
+  List<LatLng> route = [];
+  static const double trimDistance = 25;
 
+  void _trimRoute() {
+    int closestIndex = 0;
+    double closestDistance = double.infinity;
 
+    for (int i = 0; i < route.length; i++) {
+      double distance = Geolocator.distanceBetween(
+        currentPosition!.latitude,
+        currentPosition!.longitude,
+        route[i].latitude,
+        route[i].longitude,
+      );
 
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = i;
+      }
+    }
+
+    if (closestDistance < trimDistance && closestIndex > 0) {
+      route.removeRange(0, closestIndex);
+    }
+  }
+
+  /// ----- DRAW ROUTE -----
   void _drawRoute(LatLng start, LatLng end) async {
-    // ✅ Build avoid zones dynamically
-    final avoidZones = buildAvoidZonesFromSensors();
+    if (route.isEmpty || userTooFar || isRerouting) {
+      isRerouting = false;
+      userTooFar = false;
 
-    final route = await PolylineService.getRoute(
-      start,
-      end,
-      normalRouting: normalRouting,
-      avoidZones: avoidZones,
-    );
+      final avoidZones = buildAvoidZonesFromSensors();
+
+      route = await PolylineService.getRoute(
+        start,
+        end,
+        convertVehicle(selectedVehicle),
+        avoidZones,
+      );
+    } else {
+      _trimRoute();
+    }
 
     setState(() {
       _polylines.clear();
-      _polylines.add(
+
+      _polylines.addAll([
         Polyline(
-          polylineId: const PolylineId("route"),
+          polylineId: const PolylineId("route_border"),
           points: route,
-          color: Colors.blue,
-          width: 5,
+          color: colorPolylineMain,
+          width: 6,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          jointType: JointType.round,
+          zIndex: 2,
         ),
-      );
+
+        Polyline(
+          polylineId: const PolylineId("route_main"),
+          points: route,
+          color: colorPolylineBack,
+          width: 4,
+          startCap: Cap.roundCap,
+          endCap: Cap.roundCap,
+          jointType: JointType.round,
+          zIndex: 2,
+        ),
+      ]);
     });
   }
 
-
-
-
-
-///Remove
-  void showVehicleModal() {
-    showDialog(
-      context: context,
-      barrierDismissible: false, // still prevents tapping outside
-      builder: (context) {
-        return WillPopScope(
-          onWillPop: () async => false, // prevent back button
-          child: Dialog(
-            backgroundColor: Colors.transparent,
-            insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
-            child: StatefulBuilder(
-              builder: (context, setState) {
-                return Container(
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(20),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Colors.black26,
-                        blurRadius: 10,
-                        offset: Offset(0, 2),
-                      ),
-                    ],
-                  ),
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        "Which vehicle will you use?",
-                        style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                      ),
-                      const SizedBox(height: 6),
-                      const Text(
-                        "Select a vehicle from the options below before continuing.",
-                        textAlign: TextAlign.center,
-                        style: TextStyle(fontSize: 14, color: Colors.grey),
-                      ),
-                      const SizedBox(height: 20),
-
-                      // Vehicle options
-                      vehicleTile("Motorcycle", "assets/images/icons/motorcycle.png", setState),
-                      const SizedBox(height: 10),
-                      vehicleTile("Car", "assets/images/icons/car.png", setState),
-                      const SizedBox(height: 10),
-                      vehicleTile("Truck", "assets/images/icons/truck.png", setState),
-
-                      const SizedBox(height: 20),
-
-                      // Confirm button
-                      SizedBox(
-                        width: double.infinity,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: color1,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                          ),
-                          onPressed: () {
-                            if (selectedVehicle.isEmpty) {
-                              showVehicleErrorToast(context);
-                              return;
-                            }
-                            print("Selected Vehicle: $selectedVehicle");
-                            Navigator.of(context).pop();
-                          },
-                          child: const Text(
-                            "CONFIRM",
-                            style: TextStyle(
-                              fontSize: 16,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                );
-              },
-            ),
-          ),
-        );
-      },
-    );
-  }
-
+  /// ----- OPEN PLACE SEARCH -----
   Future<void> openPlaceSearch() async {
     final result = await Navigator.push(
       context,
@@ -981,11 +1251,8 @@ class _MapScreenState extends State<MapScreen> {
     );
 
     if (result != null) {
-      final LatLng position = result['latLng'];
+      final LatLng? position = result['latLng'];
       final String name = result['name'];
-
-      print('Selected place: $name');
-      print('Coordinates: ${position.latitude}, ${position.longitude}');
 
       // Create pin icon
       final BitmapDescriptor pinIcon = await BitmapDescriptor.fromAssetImage(
@@ -993,212 +1260,169 @@ class _MapScreenState extends State<MapScreen> {
         'assets/images/selected_location.png',
       );
 
-      setState(() {
-        // Remove previous tapped marker
-        if (tappedMarker != null) _markers.remove(tappedMarker);
+      // --- CASE 1: SEARCH END LOCATION (Destination) ---
+      if (searchEndLocation) {
+        if (position == null)
+          return; // Usually, destination requires a specific pin
 
-        // Add new tapped marker
-        tappedMarker = Marker(
-          markerId: const MarkerId('tapped_pin'),
-          position: position,
-          icon: pinIcon,
-          anchor: const Offset(0.5, 1.0),
-        );
-        _markers.add(tappedMarker!);
-        tappedPosition = position;
+        setState(() {
+          if (tappedMarker != null) _markers.remove(tappedMarker);
 
-        // Set currentPlace (temporary)
-        currentPlace = {
-          "name": name,
-          "location": position,
-        };
+          tappedMarker = Marker(
+            markerId: const MarkerId('tapped_pin'),
+            position: position,
+            icon: pinIcon,
+            anchor: const Offset(0.5, 1.0),
+            zIndex: 2,
+          );
+          _markers.add(tappedMarker!);
+          tappedPosition = position;
 
-        // Show confirmation sheet
-        showPinConfirmationSheet = true;
-        showDirectionSheet = false;
-        showSensorSheet = false;
-        showSensorSettingsSheet = false;
-        showRerouteConfirmationSheet = false;
-      });
+          currentPlace = {"name": name, "location": position};
 
-      if (currentPosition != null) {
-        LatLng userPosition = LatLng(currentPosition!.latitude, currentPosition!.longitude);
+          showPinConfirmationSheet = true;
+          showDirectionSheet = false;
+          showSensorSheet = false;
+          showSensorSettingsSheet = false;
+          showRerouteConfirmationSheet = false;
+          _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+        });
 
-        // Draw polyline to temporary/current place
-        _drawRoute(userPosition, position);
+        // Drawing logic for destination...
+        _handleDestinationCamera(position);
+      }
+      // --- CASE 2: SEARCH START LOCATION (Starting Point) ---
+      else if (searchStartLocation) {
+        // IF "CURRENT LOCATION" WAS SELECTED
+        if (position == null) {
+          setState(() {
+            // Reset everything related to custom start
+            savedStartPosition = null;
+            startPosition = null;
 
-        // Zoom to fit both locations
-        LatLngBounds bounds = LatLngBounds(
-          southwest: LatLng(
-            min(userPosition.latitude, position.latitude),
-            min(userPosition.longitude, position.longitude),
-          ),
-          northeast: LatLng(
-            max(userPosition.latitude, position.latitude),
-            max(userPosition.longitude, position.longitude),
-          ),
-        );
+            if (startMarker != null) {
+              _markers.remove(startMarker);
+              startMarker = null;
+            }
+            if (savedStartMarker != null) {
+              _markers.remove(savedStartMarker);
+              savedStartMarker = null;
+            }
 
-        mapController.animateCamera(CameraUpdate.newLatLngBounds(bounds, 100));
+            startPlace = {
+              "name": "Current Location",
+              "location": LatLng(
+                currentPosition!.latitude,
+                currentPosition!.longitude,
+              ),
+            };
+
+            savedStartPlace = {"name": "", "location": LatLng(0.0, 0.0)};
+
+            // Redraw from live GPS to destination
+            if (savedPinPosition != null) {
+              _drawRoute(
+                LatLng(currentPosition!.latitude, currentPosition!.longitude),
+                savedPinPosition!,
+              );
+            }
+          });
+
+          if (savedPinPosition != null) {
+            _handleDestinationCamera(savedPinPosition!);
+          } else {
+            _goToUser();
+          }
+        }
+        // IF A SPECIFIC PLACE WAS SELECTED
+        else {
+          setState(() {
+            if (startMarker != null) _markers.remove(startMarker);
+
+            startMarker = Marker(
+              markerId: const MarkerId('start_pin'),
+              position: position,
+              icon: pinIcon,
+              anchor: const Offset(0.5, 1.0),
+              zIndex: 2,
+            );
+            _markers.add(startMarker!);
+
+            // CRITICAL: Update the temp variable that the Confirm button uses
+            startPosition = position;
+
+            startPlace = {"name": name, "location": position};
+
+            showPinConfirmationSheet = true;
+            showDirectionSheet = false;
+            showSensorSheet = false;
+            showSensorSettingsSheet = false;
+            showRerouteConfirmationSheet = false;
+            _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+          });
+
+          // Use 'position' directly here to ensure the line connects to the NEW pin
+          if (savedPinPosition != null) {
+            _drawRoute(position, savedPinPosition!);
+
+            LatLngBounds bounds = LatLngBounds(
+              southwest: LatLng(
+                min(position.latitude, savedPinPosition!.latitude),
+                min(position.longitude, savedPinPosition!.longitude),
+              ),
+              northeast: LatLng(
+                max(position.latitude, savedPinPosition!.latitude),
+                max(position.longitude, savedPinPosition!.longitude),
+              ),
+            );
+            mapController.animateCamera(
+              CameraUpdate.newLatLngBounds(bounds, 120),
+            );
+          } else {
+            mapController.animateCamera(
+              CameraUpdate.newCameraPosition(
+                CameraPosition(target: position, zoom: 15),
+              ),
+            );
+          }
+        }
       }
     }
   }
 
-//Rem/ove
-// Vehicle tile widget with selection effect
-  Widget vehicleTile(String name, String iconPath, void Function(void Function()) setState) {
-    bool isSelected = selectedVehicle == name;
-
-    // Static description and thresholds
-    String description = "";
-    String safe = "";
-    String warning = "";
-    String danger = "";
-    Color safeColor = Colors.green;
-    Color warningColor = Colors.orange;
-    Color dangerColor = Colors.red;
-
-    if (name == "Motorcycle") {
-      description =
-      "Motorcycles are very vulnerable to floods even at low levels. "
-          "Unlike cars and trucks, they can easily lose balance or submerge. "
-          "Extra caution is needed when riding in flood-prone areas.";
-      safe = "0–20 cm";
-      warning = "20.1–50 cm";
-      danger = "50.1+ cm";
-      safeColor = Colors.green;
-      warningColor = Colors.orange;
-      dangerColor = Colors.red;
-    } else if (name == "Car") {
-      description =
-      "Cars can normally withstand floods that are below the door step. "
-          "They are less vulnerable than motorcycles but may still be at risk if water rises higher than the engine level.";
-      safe = "0–15 cm";
-      warning = "15.1–30 cm";
-      danger = "30.1+ cm";
-      safeColor = Colors.green;
-      warningColor = Colors.orange;
-      dangerColor = Colors.red;
-    } else if (name == "Truck") {
-      description =
-      "Trucks can handle large floods because of their size and higher chassis. "
-          "They are the safest among common vehicles in deep water, but caution is still advised in extreme flood conditions.";
-      safe = "0–40 cm";
-      warning = "40.1–60 cm";
-      danger = "60.1+ cm";
-      safeColor = Colors.green;
-      warningColor = Colors.orange;
-      dangerColor = Colors.red;
+  /// ----- HANDLE DESTINATION CAMERA -----
+  void _handleDestinationCamera(LatLng destination) {
+    LatLng? start;
+    if (savedStartPosition != null) {
+      start = savedStartPosition!;
+    } else if (currentPosition != null) {
+      start = LatLng(currentPosition!.latitude, currentPosition!.longitude);
     }
 
-    return GestureDetector(
-      onTap: () {
-        setState(() {
-          selectedVehicle = name;
-        });
-      },
-      child: Container(
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          boxShadow: [
-            BoxShadow(
-              color: Colors.black.withOpacity(0.15),
-              spreadRadius: 1,
-              blurRadius: 3,
-              offset: const Offset(0, 0),
-            ),
-          ],
+    if (start != null) {
+      _drawRoute(start, destination);
+      LatLngBounds bounds = LatLngBounds(
+        southwest: LatLng(
+          min(start.latitude, destination.latitude),
+          min(start.longitude, destination.longitude),
         ),
-        child: Column(
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 14),
-              decoration: BoxDecoration(
-                color: isSelected ? color1 : Colors.white,
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: Row(
-                children: [
-                  Image.asset(
-                    iconPath,
-                    width: 28,
-                    height: 28,
-                    color: isSelected ? Colors.white : color2,
-                    colorBlendMode: BlendMode.srcIn,
-                  ),
-                  const SizedBox(width: 12),
-                  Text(
-                    name,
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w500,
-                      color: isSelected ? Colors.white : Colors.black,
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-            // --- Animated Description Section ---
-            AnimatedSize(
-              duration: const Duration(milliseconds: 250),
-              curve: Curves.easeInOut,
-              child: isSelected
-                  ? Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      description,
-                      style: const TextStyle(
-                        fontSize: 14,
-                        color: Colors.black87,
-                        height: 1.4,
-                      ),
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      children: [
-                        Text("Safe: ", style: TextStyle(fontWeight: FontWeight.bold, color: safeColor)),
-                        Text(safe, style: TextStyle(color: safeColor)),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        Text("Warning: ", style: TextStyle(fontWeight: FontWeight.bold, color: warningColor)),
-                        Text(warning, style: TextStyle(color: warningColor)),
-                      ],
-                    ),
-                    Row(
-                      children: [
-                        Text("Danger: ", style: TextStyle(fontWeight: FontWeight.bold, color: dangerColor)),
-                        Text(danger, style: TextStyle(color: dangerColor)),
-                      ],
-                    ),
-                  ],
-                ),
-              )
-                  : const SizedBox.shrink(),
-            ),
-          ],
+        northeast: LatLng(
+          max(start.latitude, destination.latitude),
+          max(start.longitude, destination.longitude),
         ),
-      ),
-    );
+      );
+      mapController.animateCamera(CameraUpdate.newLatLngBounds(bounds, 120));
+    }
   }
 
-
+  /// ----- SHOW SELECT VEHICLE TOAST -----
   void showVehicleErrorToast(BuildContext context) {
     DelightToastBar(
       builder: (context) => ToastCard(
         leading: const Icon(Icons.error_outline, color: Colors.red, size: 28),
         title: const Text(
           "Please select a vehicle to continue",
-          style: TextStyle(
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-          ),
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
         ),
         color: Colors.white, // background white
       ),
@@ -1207,38 +1431,66 @@ class _MapScreenState extends State<MapScreen> {
     ).show(context);
   }
 
+  // bool showFloodZones = false;
 
+  //   /// ----- GET FLOOD TILE OVERLAYS -----
+  // Set<TileOverlay> getFloodTileOverlays() {
+  //   return {
+  //     TileOverlay(
+  //       tileOverlayId: TileOverlayId('xyz_tiles'),
+  //       tileProvider: UrlTileProvider(
+  //         urlTemplate: '$serverUri/media/tiles/{z}/{x}/{y}.png',
+  //       ),
+  //       transparency: 0.3,
+  //       zIndex: 1,
+  //     ),
 
+  //   };
+  // }
 
-  void showNearFloodAlertToast(BuildContext context) {
-    DelightToastBar(
-      builder: (context) => ToastCard(
-        leading: const Icon(Icons.crisis_alert_rounded, color: Colors.white, size: 28),
-        title: const Text(
-          "You are only 120–150 meters from an active flood zone",
-          style: TextStyle(
-            color: Colors.white,
-            fontSize: 15,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-        color: Colors.red, // background white
-      ),
-      autoDismiss: true,
-      snackbarDuration: Durations.extralong4,
-    ).show(context);
+  MapType _currentMapType = MapType.normal;
+
+  /// ----- MAP TYPE TO STRING -----
+  String mapTypeToString(MapType mapType) {
+    switch (mapType) {
+      case MapType.normal:
+        return "Normal";
+      case MapType.satellite:
+        return "Satellite";
+      case MapType.hybrid:
+        return "Hybrid";
+      case MapType.terrain:
+        return "Terrain";
+      case MapType.none:
+        // TODO: Handle this case.
+        throw UnimplementedError();
+    }
   }
 
+  void _convertPositionToName(Position newPos) async {
+    setState(() {
+      addressName = "Loading address...";
+    });
 
+    String result = await LocationService.getAddressFromPosition(newPos);
 
+    setState(() {
+      addressName = result;
+    });
+  }
+
+  // ========================================
+  // BUILD / CORE UI
+  // ========================================
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      resizeToAvoidBottomInset: false, // 🚫 Prevents map/buttons from shifting up
+      resizeToAvoidBottomInset:
+          false, // 🚫 Prevents map/buttons from shifting up
       body: Stack(
         children: [
-          // 🗺️ MAP
+          /// Map Background
           GoogleMap(
             onMapCreated: (controller) {
               _onMapCreated(controller);
@@ -1248,8 +1500,11 @@ class _MapScreenState extends State<MapScreen> {
                 controller.animateCamera(
                   CameraUpdate.newCameraPosition(
                     CameraPosition(
-                      target: LatLng(currentPosition!.latitude, currentPosition!.longitude),
-                      zoom: 17.0, // zoom to 17
+                      target: LatLng(
+                        currentPosition!.latitude,
+                        currentPosition!.longitude,
+                      ),
+                      zoom: 17.0,
                     ),
                   ),
                 );
@@ -1259,64 +1514,36 @@ class _MapScreenState extends State<MapScreen> {
             onCameraMove: _onCameraMove,
             initialCameraPosition: CameraPosition(
               target: currentPosition != null
-                  ? LatLng(currentPosition!.latitude, currentPosition!.longitude)
+                  ? LatLng(
+                      currentPosition!.latitude,
+                      currentPosition!.longitude,
+                    )
                   : _center,
-              zoom: 15.0, // start at 15
+              zoom: 15.0,
             ),
-            mapType: MapType.normal,
+            mapType: useOpenFreeMapStyle ? MapType.none : _currentMapType,
             markers: _markers,
             circles: _circles,
             polylines: _polylines,
-            //polygons: _polygons,
             compassEnabled: false,
             myLocationEnabled: false,
             zoomControlsEnabled: false,
-
             tileOverlays: {
-              TileOverlay(
-                tileOverlayId: TileOverlayId('xyz_tiles'),
-                tileProvider: UrlTileProvider(
-                  urlTemplate: '$serverUri/tiles/{z}/{x}/{y}.png',
+              //if (showFloodZones) ...getFloodTileOverlays(),
+              if (useOpenFreeMapStyle)
+                TileOverlay(
+                  tileOverlayId: const TileOverlayId(
+                    'openfreemap_liberty_layer',
+                  ),
+                  tileProvider: UrlTileProvider(
+                    urlTemplate:
+                        'https://b.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png',
+                  ),
+                  tileSize: 256,
                 ),
-                transparency: 0.3,
-              ),
             },
+            //minMaxZoomPreference: const MinMaxZoomPreference(13.0, 18.0),
           ),
-
-          // 🔍 Floating Search Bar (Top)
-          // Positioned(
-          //   top: 50,
-          //   left: 20,
-          //   right: 20,
-          //   child: Container(
-          //     decoration: BoxDecoration(
-          //       color: Colors.white,
-          //       borderRadius: BorderRadius.circular(30),
-          //       boxShadow: [
-          //         BoxShadow(
-          //           color: Colors.black.withOpacity(0.1),
-          //           blurRadius: 6,
-          //           offset: const Offset(0, 2),
-          //         ),
-          //       ],
-          //     ),
-          //     child: TextField(
-          //       decoration: InputDecoration(
-          //         hintText: 'Search location...',
-          //         hintStyle: const TextStyle(color: Colors.grey),
-          //         prefixIcon: const Icon(Icons.search, color: Colors.grey),
-          //         border: InputBorder.none,
-          //         contentPadding: const EdgeInsets.symmetric(vertical: 15),
-          //       ),
-          //       onSubmitted: (value) {
-          //         // TODO: Add search functionality
-          //         print("Search: $value");
-          //       },
-          //     ),
-          //   ),
-          // ),
-
-          // 📍 Bottom Button Bar
 
           ///Side Buttons
           Positioned(
@@ -1348,7 +1575,6 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
 
-
                 ElevatedButton(
                   onPressed: _resetOrientation,
                   style: ElevatedButton.styleFrom(
@@ -1371,21 +1597,53 @@ class _MapScreenState extends State<MapScreen> {
                   ),
                 ),
 
-
-
                 ElevatedButton(
                   onPressed: () {
-                    /// TODO: Add function opening selecting direction
+                    if (showMainSheet && selectedVehicle.isEmpty) {
+                      showSelectVehicleToast(context);
+                      showSensorSheet = false;
+                      showMainSheet = true;
+                      _circles.removeWhere(
+                        (c) => c.circleId.value.startsWith('sensor'),
+                      );
+                      return;
+                    }
 
-                    // showAppToast(
-                    //   context,
-                    //   message: "Sensor #1 — Water level rising!",
-                    //   status: 'danger',
-                    //   distance: 30,
-                    // );
+                    showMapSettingsPopup(
+                      context,
+                      initialMapType: mapTypeToString(_currentMapType),
+                      onConfirm: (selectedMapType) {
+                        setState(() {
+                          switch (selectedMapType) {
+                            case "Normal":
+                              _currentMapType = MapType.normal;
+                              break;
+                            case "Satellite":
+                              _currentMapType = MapType.satellite;
+                              break;
+                            case "Hybrid":
+                              _currentMapType = MapType.hybrid;
+                              break;
+                            case "Terrain":
+                              _currentMapType = MapType.terrain;
+                              break;
+                          }
+
+                          // showFloodZones = (selectedLayer == "Flood GIS");
+                        });
+
+                        // if (selectedLayer == "Flood GIS") {
+                        //   Future.delayed(Duration.zero, () {
+                        //     if (mounted) {
+                        //       showInfoHeatMap(context);
+                        //     }
+                        //   });
+                        // }
+                      },
+                    );
                   },
                   style: ElevatedButton.styleFrom(
-                    backgroundColor: color1,
+                    backgroundColor: colorPrimaryMid,
                     padding: EdgeInsets.zero,
                     shape: RoundedRectangleBorder(
                       borderRadius: BorderRadius.circular(10),
@@ -1395,11 +1653,17 @@ class _MapScreenState extends State<MapScreen> {
                     minimumSize: const Size(40, 40),
                   ),
                   child: Center(
-                    child: Image.asset(
-                      'assets/images/icons/direction.png',
-                      width: 25,
-                      height: 25,
-                      fit: BoxFit.contain,
+                    child: ColorFiltered(
+                      colorFilter: const ColorFilter.mode(
+                        Colors.white,
+                        BlendMode.srcIn,
+                      ),
+                      child: Image.asset(
+                        'assets/images/icons/layer.png',
+                        width: 25,
+                        height: 25,
+                        fit: BoxFit.contain,
+                      ),
                     ),
                   ),
                 ),
@@ -1409,25 +1673,22 @@ class _MapScreenState extends State<MapScreen> {
 
           ///Direction Details
           AnimatedPositioned(
-            duration: Duration(milliseconds: 200),
+            duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
             left: 0,
             right: 0,
-
-            /// Slide up / Slide down
-            bottom: showDirectionSheet ? directionDragOffset : -directionSheetHeight,
-
-            /// AUTO HEIGHT (null at first, then assigned after measurement)
+            bottom: showDirectionSheet
+                ? directionDragOffset
+                : -directionSheetHeight,
             height: directionSheetHeight == 0 ? null : directionSheetHeight,
 
             child: GestureDetector(
               onVerticalDragUpdate: (details) {
                 setState(() {
                   directionDragOffset -= details.delta.dy;
-
-                  if (directionDragOffset > 0) directionDragOffset = 0; // cannot drag above
+                  if (directionDragOffset > 0) directionDragOffset = 0;
                   if (directionDragOffset < -directionSheetHeight) {
-                    directionDragOffset = -directionSheetHeight; // cannot drag below hidden
+                    directionDragOffset = -directionSheetHeight;
                   }
                 });
               },
@@ -1447,19 +1708,28 @@ class _MapScreenState extends State<MapScreen> {
               child: Container(
                 key: directionKey,
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                  boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10)],
+                  color: colorSheet,
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
+                  boxShadow: const [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 12,
+                      offset: Offset(0, -3),
+                    ),
+                  ],
                 ),
 
                 child: Padding(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.fromLTRB(20, 14, 20, 20),
 
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      /// AUTO-DETECT HEIGHT after widget builds
                       WidgetsBinding.instance.addPostFrameCallback((_) {
-                        final renderBox = directionKey.currentContext?.findRenderObject() as RenderBox?;
+                        final renderBox =
+                            directionKey.currentContext?.findRenderObject()
+                                as RenderBox?;
                         if (renderBox != null) {
                           final newHeight = renderBox.size.height;
                           if (directionSheetHeight != newHeight) {
@@ -1472,106 +1742,160 @@ class _MapScreenState extends State<MapScreen> {
 
                       return Column(
                         mainAxisSize: MainAxisSize.min,
+                        crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // Drag handle
-                          Container(
-                            width: 40,
-                            height: 5,
-                            margin: const EdgeInsets.only(bottom: 10),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[300],
-                              borderRadius: BorderRadius.circular(10),
+                          // Drag Handle
+                          Center(
+                            child: Container(
+                              width: 48,
+                              height: 6,
+                              margin: const EdgeInsets.only(bottom: 12),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[400],
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
                           ),
 
-                          // Title
+                          // Header
                           Row(
                             children: [
-                              Icon(Icons.polyline_rounded, size: 32, color: color1_2),
+                              Icon(
+                                Icons.alt_route_rounded,
+                                size: 28,
+                                color: colorPrimary,
+                              ),
                               const SizedBox(width: 10),
-                              Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
-                                      "Directions",
-                                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                              Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: const [
+                                  Text(
+                                    "Directions",
+                                    style: TextStyle(
+                                      fontFamily: 'AvenirNext',
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w700,
+                                      color: colorTextPrimary,
                                     ),
-                                    Text(
-                                      "Select a vehicle and destination",
-                                      style: TextStyle(color: Colors.grey[600]),
+                                  ),
+                                  SizedBox(height: 2),
+                                  Text(
+                                    "Choose your start and destination",
+                                    style: TextStyle(
+                                      fontFamily: 'AvenirNext',
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.w400,
+                                      color: colorTextSecondary,
                                     ),
-                                  ],
-                                ),
+                                  ),
+                                ],
                               ),
                             ],
                           ),
 
-                          const SizedBox(height: 15),
+                          const SizedBox(height: 16),
 
-                          // Current & Destination Box
+                          // Location Card
                           Container(
-                            padding: const EdgeInsets.all(12),
+                            padding: const EdgeInsets.symmetric(
+                              vertical: 8,
+                              horizontal: 12,
+                            ),
                             decoration: BoxDecoration(
-                              color: color1_4,
-                              borderRadius: BorderRadius.circular(12),
+                              color: colorPrimaryLight.withOpacity(0.15),
+                              borderRadius: BorderRadius.circular(14),
                             ),
                             child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
                               children: [
-                                /// Current Location
+                                // Current Location
                                 InkWell(
                                   onTap: () {
-                                    print("Current Location clicked");
+                                    setState(() {
+                                      searchStartLocation = true;
+                                      searchEndLocation = false;
+                                    });
+                                    openPlaceSearch();
                                   },
-                                  child: Container(
+                                  child: SizedBox(
                                     height: 50,
-                                    padding: const EdgeInsets.symmetric(horizontal: 4),
                                     child: Row(
                                       children: [
-                                        Image.asset('assets/images/icons/current.png', width: 22, height: 22),
-                                        const SizedBox(width: 10),
+                                        Icon(
+                                          (savedStartPosition == null)
+                                              ? Icons.my_location
+                                              : Icons.location_on,
+                                          size: 20,
+                                          color: (savedStartPosition == null)
+                                              ? colorPrimary
+                                              : colorDanger,
+                                        ),
+                                        const SizedBox(width: 12),
                                         Expanded(
                                           child: Text(
-                                            "Current Location",
-                                            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                                            savedStartPlace["name"] != ""
+                                                ? savedStartPlace["name"]
+                                                : (savedStartPosition != null
+                                                      ? "${savedStartPosition!.latitude.toStringAsFixed(5)}, ${savedStartPosition!.longitude.toStringAsFixed(5)}"
+                                                      : "Current Location"),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontFamily: 'AvenirNext',
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                           ),
                                         ),
-                                        Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                                        Icon(
+                                          Icons.chevron_right,
+                                          color: Colors.grey[500],
+                                        ),
                                       ],
                                     ),
                                   ),
                                 ),
 
-                                const Divider(height: 1, color: Colors.grey),
+                                Divider(height: 1, color: Colors.grey.shade300),
 
-                                /// Destination
+                                // Destination
                                 InkWell(
                                   onTap: () {
+                                    setState(() {
+                                      searchStartLocation = false;
+                                      searchEndLocation = true;
+                                    });
                                     openPlaceSearch();
                                   },
-                                  child: Container(
+                                  child: SizedBox(
                                     height: 50,
-                                    padding: const EdgeInsets.symmetric(horizontal: 4),
                                     child: Row(
                                       children: [
-                                        Image.asset('assets/images/icons/destination.png', width: 22, height: 22),
-                                        const SizedBox(width: 10),
+                                        Icon(
+                                          Icons.location_on,
+                                          size: 20,
+                                          color: colorDanger,
+                                        ),
+                                        const SizedBox(width: 12),
                                         Expanded(
                                           child: Text(
-                                            // Show savedPlace name if available, otherwise use coordinates, or default text
                                             savedPlace["name"] != ""
                                                 ? savedPlace["name"]
                                                 : (savedPinPosition != null
-                                                ? "${savedPinPosition!.latitude.toStringAsFixed(5)}, ${savedPinPosition!.longitude.toStringAsFixed(5)}"
-                                                : "Select Destination"),
-                                            style: const TextStyle(fontSize: 16),
-                                            overflow: TextOverflow.ellipsis, // truncate if too long
-                                            maxLines: 1, // ensure only one line
+                                                      ? addressName
+                                                      : "Select Destination"),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                            style: const TextStyle(
+                                              fontFamily: 'AvenirNext',
+                                              fontSize: 15,
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                           ),
                                         ),
-                                        Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
+                                        Icon(
+                                          Icons.chevron_right,
+                                          color: Colors.grey[500],
+                                        ),
                                       ],
                                     ),
                                   ),
@@ -1580,59 +1904,7 @@ class _MapScreenState extends State<MapScreen> {
                             ),
                           ),
 
-                          const SizedBox(height: 10),
-
-                          // Vehicle selection row
-                          Container(
-                            width: double.infinity,
-                            child: Center(
-                              child: Container(
-                                padding: const EdgeInsets.all(5),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(40),
-                                  boxShadow: [
-                                    BoxShadow(
-                                      color: Colors.black.withOpacity(0.15),
-                                      spreadRadius: 1,
-                                      blurRadius: 3,
-                                      offset: const Offset(0, 0),
-                                    ),
-                                  ],
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    selectVehicle(
-                                      name: 'Motorcycle',
-                                      imagePath: 'assets/images/icons/motorcycle.png',
-                                      onTap: () {
-                                        setState(() => selectedVehicle = 'Motorcycle');
-                                      },
-                                    ),
-                                    const SizedBox(width: 5),
-                                    selectVehicle(
-                                      name: 'Car',
-                                      imagePath: 'assets/images/icons/car.png',
-                                      onTap: () {
-                                        setState(() => selectedVehicle = 'Car');
-                                      },
-                                    ),
-                                    const SizedBox(width: 5),
-                                    selectVehicle(
-                                      name: 'Truck',
-                                      imagePath: 'assets/images/icons/truck.png',
-                                      onTap: () {
-                                        setState(() => selectedVehicle = 'Truck');
-                                      },
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-
-                          SizedBox(height: 50), // extra spacing same as your Sensor sheet
+                          const SizedBox(height: 30),
                         ],
                       );
                     },
@@ -1644,20 +1916,23 @@ class _MapScreenState extends State<MapScreen> {
 
           ///Sensor Settings
           AnimatedPositioned(
-            duration: Duration(milliseconds: 200),
+            duration: const Duration(milliseconds: 200),
             curve: Curves.easeOut,
             left: 0,
             right: 0,
-            bottom: showSensorSettingsSheet ? sensorSettingsDragOffset : -sensorSettingsSheetHeight,
-            // AUTO HEIGHT
-            height: sensorSettingsSheetHeight == 0 ? null : sensorSettingsSheetHeight,
+            bottom: showSensorSettingsSheet
+                ? sensorSettingsDragOffset
+                : -sensorSettingsSheetHeight,
+            height: sensorSettingsSheetHeight == 0
+                ? null
+                : sensorSettingsSheetHeight,
             child: GestureDetector(
               onVerticalDragUpdate: (details) {
                 setState(() {
                   sensorSettingsDragOffset -= details.delta.dy;
 
-                  if (sensorSettingsDragOffset > 0) sensorSettingsDragOffset = 0;
-
+                  if (sensorSettingsDragOffset > 0)
+                    sensorSettingsDragOffset = 0;
                   if (sensorSettingsDragOffset < -sensorSettingsSheetHeight) {
                     sensorSettingsDragOffset = -sensorSettingsSheetHeight;
                   }
@@ -1675,21 +1950,32 @@ class _MapScreenState extends State<MapScreen> {
                   });
                 }
               },
-
               child: Container(
                 key: sensorSettingsKey,
                 decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                  boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 10)],
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(24),
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.black26,
+                      blurRadius: 12,
+                      offset: const Offset(0, -3),
+                    ),
+                  ],
                 ),
                 child: Padding(
-                  padding: const EdgeInsets.all(20),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
+                  ),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      // AUTO-DETECT THE HEIGHT AFTER FIRST BUILD
                       WidgetsBinding.instance.addPostFrameCallback((_) {
-                        final renderBox = sensorSettingsKey.currentContext?.findRenderObject() as RenderBox?;
+                        final renderBox =
+                            sensorSettingsKey.currentContext?.findRenderObject()
+                                as RenderBox?;
                         if (renderBox != null) {
                           final newHeight = renderBox.size.height;
                           if (sensorSettingsSheetHeight != newHeight) {
@@ -1704,31 +1990,50 @@ class _MapScreenState extends State<MapScreen> {
                         mainAxisSize: MainAxisSize.min,
                         children: [
                           // Drag handle
-                          Container(
-                            width: 40,
-                            height: 5,
-                            margin: const EdgeInsets.only(bottom: 10),
-                            decoration: BoxDecoration(
-                              color: Colors.grey[300],
-                              borderRadius: BorderRadius.circular(10),
+                          Center(
+                            child: Container(
+                              width: 48,
+                              height: 6,
+                              margin: const EdgeInsets.only(bottom: 16),
+                              decoration: BoxDecoration(
+                                color: Colors.grey[300],
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
                           ),
 
+                          // Header
                           Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Icon(Icons.settings, size: 32, color: color1_2),
-                              const SizedBox(width: 10),
+                              Icon(
+                                Icons.settings_rounded,
+                                size: 32,
+                                color: colorPrimary,
+                              ),
+                              const SizedBox(width: 12),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
+                                  children: const [
+                                    Text(
                                       "Sensor Settings",
-                                      style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                                      style: TextStyle(
+                                        fontFamily: 'AvenirNext',
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w700,
+                                        color: colorTextPrimary,
+                                      ),
                                     ),
+                                    SizedBox(height: 2),
                                     Text(
                                       "Control sensor display options",
-                                      style: TextStyle(color: Colors.grey[600]),
+                                      style: TextStyle(
+                                        fontFamily: 'AvenirNext',
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w400,
+                                        color: colorTextSecondary,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1736,21 +2041,23 @@ class _MapScreenState extends State<MapScreen> {
                             ],
                           ),
 
-                          const SizedBox(height: 15),
+                          const SizedBox(height: 20),
 
-                          _sensorToggle(
+                          // Sensor Toggles
+                          _sensorToggleCard(
                             title: 'Show All Sensors',
                             description: 'Display all sensors on the map',
                             value: showAllSensors,
                             onChanged: (val) {
                               setState(() {
                                 showAllSensors = val;
+                                showCriticalSensors = false;
                               });
                               _refreshSensorMarkers();
                             },
                           ),
 
-                          _sensorToggle(
+                          _sensorToggleCard(
                             title: 'Show Sensor Range / Coverage',
                             description: 'Display sensor coverage area',
                             value: showSensorCoverage,
@@ -1761,18 +2068,20 @@ class _MapScreenState extends State<MapScreen> {
                             },
                           ),
 
-                          _sensorToggle(
+                          _sensorToggleCard(
                             title: 'Alerted / Critical Sensors Only',
                             description: 'Show only sensors with alerts',
                             value: showCriticalSensors,
                             onChanged: (val) {
                               setState(() {
                                 showCriticalSensors = val;
+                                showAllSensors = !val;
                               });
+                              _refreshSensorMarkers();
                             },
                           ),
 
-                          _sensorToggle(
+                          _sensorToggleCard(
                             title: 'Sensor Labels',
                             description: 'Show sensor names or IDs on the map',
                             value: showSensorLabels,
@@ -1783,7 +2092,8 @@ class _MapScreenState extends State<MapScreen> {
                               _refreshSensorMarkers();
                             },
                           ),
-                          SizedBox(height: 50,)
+
+                          const SizedBox(height: 40),
                         ],
                       );
                     },
@@ -1800,31 +2110,26 @@ class _MapScreenState extends State<MapScreen> {
             left: 0,
             right: 0,
             bottom: showSensorSheet ? sensorDragOffset : -sensorSheetHeight,
-
-            // AUTO HEIGHT (same logic as Settings)
             height: sensorSheetHeight == 0 ? null : sensorSheetHeight,
-
             child: GestureDetector(
               onVerticalDragUpdate: (details) {
                 setState(() {
                   sensorDragOffset -= details.delta.dy;
-
                   if (sensorDragOffset > 0) sensorDragOffset = 0;
-
                   if (sensorDragOffset < -sensorSheetHeight) {
                     sensorDragOffset = -sensorSheetHeight;
                   }
                 });
               },
-
               onVerticalDragEnd: (details) {
                 if (sensorDragOffset < -sensorSheetHeight / 2) {
                   setState(() {
                     showSensorSheet = false;
+                    showMainSheet = selectedVehicle.isEmpty;
                     sensorDragOffset = 0;
-
-                    // Remove sensor circles when closing
-                    _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+                    _circles.removeWhere(
+                      (c) => c.circleId.value.startsWith('sensor'),
+                    );
                   });
                 } else {
                   setState(() {
@@ -1832,33 +2137,31 @@ class _MapScreenState extends State<MapScreen> {
                   });
                 }
               },
-
               child: Container(
                 key: sensorKey,
-                decoration: const BoxDecoration(
+                decoration: BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-                  boxShadow: [
+                  borderRadius: const BorderRadius.vertical(
+                    top: Radius.circular(20),
+                  ),
+                  boxShadow: const [
                     BoxShadow(
                       color: Colors.black26,
-                      blurRadius: 10,
-                      offset: Offset(0, -2),
+                      blurRadius: 12,
+                      offset: Offset(0, -4),
                     ),
                   ],
                 ),
-
                 child: Padding(
                   padding: const EdgeInsets.all(20),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      // AUTO-DETECT HEIGHT
                       WidgetsBinding.instance.addPostFrameCallback((_) {
                         final renderBox =
-                        sensorKey.currentContext?.findRenderObject() as RenderBox?;
-
+                            sensorKey.currentContext?.findRenderObject()
+                                as RenderBox?;
                         if (renderBox != null) {
                           final newHeight = renderBox.size.height;
-
                           if (sensorSheetHeight != newHeight) {
                             setState(() {
                               sensorSheetHeight = newHeight;
@@ -1871,6 +2174,7 @@ class _MapScreenState extends State<MapScreen> {
                           ? sensors[selectedSensorId]!
                           : null;
                       final data = sensor?['sensorData'];
+                      final location = sensor?['location'];
 
                       return Column(
                         mainAxisSize: MainAxisSize.min,
@@ -1892,21 +2196,33 @@ class _MapScreenState extends State<MapScreen> {
                           // HEADER
                           Row(
                             children: [
-                              const Icon(Icons.sensors,
-                                  size: 32, color: color1_2),
+                              Icon(
+                                Icons.sensors,
+                                size: 32,
+                                color: colorPrimaryMid,
+                              ), // primary theme
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text(
+                                    Text(
                                       "Sensor Details",
-                                      style: TextStyle(
-                                          fontSize: 20, fontWeight: FontWeight.bold),
+                                      style: const TextStyle(
+                                        fontFamily: 'AvenirNext',
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w700,
+                                        color: Colors.black87,
+                                      ),
                                     ),
                                     Text(
-                                      "Tap for more information",
-                                      style: TextStyle(color: Colors.grey[600]),
+                                      "Tap View for more information",
+                                      style: TextStyle(
+                                        fontFamily: 'AvenirNext',
+                                        fontSize: 14,
+                                        fontWeight: FontWeight.w500,
+                                        color: Colors.grey[600],
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -1921,11 +2237,11 @@ class _MapScreenState extends State<MapScreen> {
                             padding: const EdgeInsets.all(16),
                             decoration: BoxDecoration(
                               color: Colors.white,
-                              borderRadius: BorderRadius.circular(14),
+                              borderRadius: BorderRadius.circular(16),
                               boxShadow: const [
                                 BoxShadow(
                                   color: Colors.black12,
-                                  blurRadius: 6,
+                                  blurRadius: 5,
                                   offset: Offset(0, 2),
                                 ),
                               ],
@@ -1933,45 +2249,71 @@ class _MapScreenState extends State<MapScreen> {
                             child: Column(
                               children: [
                                 _infoRow("Sensor ID", selectedSensorId ?? "-"),
-                                _infoRow("Location", "Ortigas Ave"),
-                                _infoRow("Flood Height", "${data?['floodHeight'] ?? "-"} cm"),
-                                _infoRow("Distance", "${data?['distance'] ?? "-"} cm"),
+                                _infoRow(
+                                  "Location",
+                                  location.length > 12
+                                      ? '${location.substring(0, 12)}...'
+                                      : location,
+                                ),
+                                _infoRow(
+                                  "Flood Height",
+                                  data?['floodHeight'] != null
+                                      ? "${UnitConverter.cmToFeet(double.tryParse(data!['floodHeight'].toString()) ?? 0).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')} ft"
+                                      : "-",
+                                ),
+                                _infoRow(
+                                  "Current Flood Category",
+                                  data?['floodCatNow']?.toString() ?? "-",
+                                ),
+                                _infoRow(
+                                  "Forecast (5-min ahead)",
+                                  data?['forecast'] != null
+                                      ? "${UnitConverter.cmToFeet(double.tryParse(data!['forecast'].toString()) ?? 0).toStringAsFixed(1).replaceAll(RegExp(r'\.0$'), '')} ft"
+                                      : "-",
+                                ),
+                                _infoRow(
+                                  "Forecasted Flood Category",
+                                  data?['floodForecastCat']?.toString() ?? "-",
+                                ),
                                 _statusRow(
                                   "Status",
-                                  data?['status'] ?? "-",
+                                  (selectedVehicle.isEmpty)
+                                      ? "Pending..."
+                                      : (data?['status'] ?? "-"),
                                   _getStatusColor(data?['status'] ?? ""),
                                 ),
-                                _infoRow("Last Update", data?['lastUpdate'] ?? "-"),
+                                _statusRow(
+                                  "Forecasted Status",
+                                  (selectedVehicle.isEmpty)
+                                      ? "Pending..."
+                                      : (data?['forecastedStatus'] ?? "-"),
+                                  _getStatusColor(
+                                    data?['forecastedStatus'] ?? "",
+                                  ),
+                                ),
+                                _infoRow(
+                                  "Last Update",
+                                  data?['lastUpdate'] != null
+                                      ? formatToPHT(data!['lastUpdate'])
+                                      : "-",
+                                ),
                               ],
                             ),
                           ),
 
                           const SizedBox(height: 20),
 
-                          // BUTTON
-                          Center(
-                            child: SizedBox(
-                              width: double.infinity,
-                              child: ElevatedButton(
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: color1,
-                                  padding: const EdgeInsets.symmetric(vertical: 14),
-                                  shape: RoundedRectangleBorder(
-                                    borderRadius: BorderRadius.circular(12),
-                                  ),
-                                ),
-                                onPressed: () {
-                                  Navigator.pushNamed(context, '/info');
-                                },
-                                child: const Text(
-                                  "View Full Details",
-                                  style: TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
+                          // PRIMARY BUTTON (modern, blue theme)
+                          SizedBox(
+                            width: double.infinity,
+                            child: primaryButton(
+                              text: "View Full Details",
+                              onTap: () {
+                                setState(() {
+                                  sensorViewInfo = selectedSensorId!;
+                                });
+                                Navigator.pushNamed(context, '/info');
+                              },
                             ),
                           ),
 
@@ -1991,30 +2333,33 @@ class _MapScreenState extends State<MapScreen> {
             curve: Curves.easeOut,
             left: 0,
             right: 0,
-            bottom: showPinConfirmationSheet ? pinConfirmationDragOffset : -pinConfirmationSheetHeight,
-
-            // AUTO HEIGHT
-            height: pinConfirmationSheetHeight == 0 ? null : pinConfirmationSheetHeight,
+            bottom: showPinConfirmationSheet
+                ? pinConfirmationDragOffset
+                : -pinConfirmationSheetHeight,
+            height: pinConfirmationSheetHeight == 0
+                ? null
+                : pinConfirmationSheetHeight,
 
             child: GestureDetector(
               onVerticalDragUpdate: (details) {
                 setState(() {
                   pinConfirmationDragOffset -= details.delta.dy;
-
-                  if (pinConfirmationDragOffset > 0) pinConfirmationDragOffset = 0;
-
+                  if (pinConfirmationDragOffset > 0)
+                    pinConfirmationDragOffset = 0;
                   if (pinConfirmationDragOffset < -pinConfirmationSheetHeight) {
                     pinConfirmationDragOffset = -pinConfirmationSheetHeight;
                   }
                 });
               },
-
               onVerticalDragEnd: (details) {
-                if (pinConfirmationDragOffset < -pinConfirmationSheetHeight / 2) {
+                if (pinConfirmationDragOffset <
+                    -pinConfirmationSheetHeight / 2) {
                   setState(() {
                     cancelPinSelection();
                     pinConfirmationDragOffset = 0;
-                    _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+                    _circles.removeWhere(
+                      (c) => c.circleId.value.startsWith('sensor'),
+                    );
                   });
                 } else {
                   setState(() {
@@ -2031,8 +2376,8 @@ class _MapScreenState extends State<MapScreen> {
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black26,
-                      blurRadius: 10,
-                      offset: Offset(0, -2),
+                      blurRadius: 12,
+                      offset: Offset(0, -3),
                     ),
                   ],
                 ),
@@ -2041,14 +2386,12 @@ class _MapScreenState extends State<MapScreen> {
                   padding: const EdgeInsets.all(20),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      // AUTO-DETECT HEIGHT
                       WidgetsBinding.instance.addPostFrameCallback((_) {
                         final renderBox =
-                        pinConfirmKey.currentContext?.findRenderObject() as RenderBox?;
-
+                            pinConfirmKey.currentContext?.findRenderObject()
+                                as RenderBox?;
                         if (renderBox != null) {
                           final newHeight = renderBox.size.height;
-
                           if (pinConfirmationSheetHeight != newHeight) {
                             setState(() {
                               pinConfirmationSheetHeight = newHeight;
@@ -2057,16 +2400,10 @@ class _MapScreenState extends State<MapScreen> {
                         }
                       });
 
-                      final sensor = selectedSensorId != null
-                          ? sensors[selectedSensorId]!
-                          : null;
-                      final data = sensor?['sensorData'];
-
                       return Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // DRAG HANDLE
                           Center(
                             child: Container(
                               width: 40,
@@ -2077,26 +2414,39 @@ class _MapScreenState extends State<MapScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 15),
 
-                          // HEADER
+                          const SizedBox(height: 14),
+
                           Row(
                             children: [
-                              const Icon(Icons.location_pin,
-                                  size: 32, color: color1_2),
+                              const Icon(
+                                Icons.location_pin,
+                                size: 30,
+                                color: Colors.blue,
+                              ),
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    const Text(
+                                  children: const [
+                                    Text(
                                       "Set Pin Location",
                                       style: TextStyle(
-                                          fontSize: 20, fontWeight: FontWeight.bold),
+                                        fontFamily: 'AvenirNext',
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w700,
+                                        color: colorTextPrimary,
+                                      ),
                                     ),
                                     Text(
-                                      "Tap Confirm to set new pin location",
-                                      style: TextStyle(color: Colors.grey[600]),
+                                      "Tap Confirm to set new pin location.",
+                                      style: TextStyle(
+                                        fontFamily: 'AvenirNext',
+                                        fontSize: 13,
+                                        color: Colors
+                                            .grey, // same as Reroute subtitle
+                                        fontWeight: FontWeight.w400,
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -2104,94 +2454,92 @@ class _MapScreenState extends State<MapScreen> {
                             ],
                           ),
 
-                          const SizedBox(height: 15),
+                          const SizedBox(height: 18),
 
-                          // CANCEL & CONFIRM BUTTONS
                           Row(
                             children: [
-                              // CANCEL BUTTON
                               Expanded(
-                                child: SizedBox(
-                                  height: 50,
-                                  child: OutlinedButton(
-                                    style: OutlinedButton.styleFrom(
-                                      side: const BorderSide(
-                                          color: color1, width: 2),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                    onPressed: () {
-                                      cancelPinSelection();
-                                    },
-                                    child: const Text(
-                                      "CANCEL",
-                                      style: TextStyle(
-                                        color: color1,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                  ),
+                                child: secondaryButton(
+                                  text: "CANCEL",
+                                  onTap: () {
+                                    cancelPinSelection();
+                                    _goToUser();
+                                    setState(() {
+                                      showPinConfirmationSheet = false;
+                                    });
+                                  },
                                 ),
                               ),
-
                               const SizedBox(width: 12),
-
-                              // CONFIRM BUTTON
                               Expanded(
-                                child: SizedBox(
-                                  height: 50,
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: color1,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                    onPressed: () {
-                                      setState(() {
-                                        // Remove old saved pin if exists
+                                child: primaryButton(
+                                  text: "CONFIRM",
+                                  onTap: () {
+                                    setState(() {
+                                      if (searchEndLocation) {
                                         if (savedPinMarker != null) {
                                           _markers.remove(savedPinMarker);
                                         }
 
-                                        // Promote temporary pin → official saved pin
                                         savedPinMarker = tappedMarker;
                                         savedPinPosition = tappedPosition;
+                                        savedPlace = Map.from(currentPlace);
 
-                                        savedPlace = Map.from(currentPlace); // update savedPlace
+                                        _convertPositionToName(
+                                          Position(
+                                            latitude: tappedPosition!.latitude,
+                                            longitude:
+                                                tappedPosition!.longitude,
+                                            timestamp: DateTime.now(),
+                                            accuracy: 0,
+                                            altitude: 0,
+                                            heading: 0,
+                                            speed: 0,
+                                            speedAccuracy: 0,
+                                            altitudeAccuracy: 0,
+                                            headingAccuracy: 0,
+                                          ),
+                                        );
 
-                                        // Clear temp variables
                                         tappedMarker = null;
                                         tappedPosition = null;
                                         currentPlace = {
                                           "name": "",
                                           "location": LatLng(0.0, 0.0),
                                         };
+                                      } else if (searchStartLocation) {
+                                        if (savedStartMarker != null) {
+                                          _markers.remove(savedStartMarker);
+                                        }
 
-                                        // Hide confirmation sheet and cleanup
-                                        showPinConfirmationSheet = false;
+                                        savedStartMarker = startMarker;
+                                        savedStartPosition = startPosition;
+                                        savedStartPlace = Map.from(startPlace);
 
-                                        // Optional: remove sensor circles
-                                        _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
-                                      });
-                                    },
-                                    child: const Text(
-                                      "CONFIRM",
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
+                                        startMarker = null;
+                                        startPosition = null;
+                                        startPlace = {
+                                          "name": "",
+                                          "location": LatLng(0.0, 0.0),
+                                        };
+                                      }
+
+                                      showPinConfirmationSheet = false;
+                                      showDirectionSheet = true;
+                                      _circles.removeWhere(
+                                        (c) => c.circleId.value.startsWith(
+                                          'sensor',
+                                        ),
+                                      );
+                                      _goToUser();
+                                    });
+                                  },
                                 ),
                               ),
                             ],
                           ),
 
-                          const SizedBox(height: 40), // bottom padding
+                          const SizedBox(height: 40),
                         ],
                       );
                     },
@@ -2207,30 +2555,38 @@ class _MapScreenState extends State<MapScreen> {
             curve: Curves.easeOut,
             left: 0,
             right: 0,
-            bottom: showRerouteConfirmationSheet ? rerouteConfirmationDragOffset : -rerouteConfirmationSheetHeight,
+            bottom: showRerouteConfirmationSheet
+                ? rerouteConfirmationDragOffset
+                : -rerouteConfirmationSheetHeight,
 
-            // AUTO HEIGHT
-            height: rerouteConfirmationSheetHeight == 0 ? null : rerouteConfirmationSheetHeight,
+            height: rerouteConfirmationSheetHeight == 0
+                ? null
+                : rerouteConfirmationSheetHeight,
 
             child: GestureDetector(
               onVerticalDragUpdate: (details) {
                 setState(() {
                   rerouteConfirmationDragOffset -= details.delta.dy;
 
-                  if (rerouteConfirmationDragOffset > 0) rerouteConfirmationDragOffset = 0;
-
-                  if (rerouteConfirmationDragOffset < -rerouteConfirmationSheetHeight) {
-                    rerouteConfirmationDragOffset = -rerouteConfirmationSheetHeight;
+                  if (rerouteConfirmationDragOffset > 0)
+                    rerouteConfirmationDragOffset = 0;
+                  if (rerouteConfirmationDragOffset <
+                      -rerouteConfirmationSheetHeight) {
+                    rerouteConfirmationDragOffset =
+                        -rerouteConfirmationSheetHeight;
                   }
                 });
               },
 
               onVerticalDragEnd: (details) {
-                if (rerouteConfirmationDragOffset < -rerouteConfirmationSheetHeight / 2) {
+                if (rerouteConfirmationDragOffset <
+                    -rerouteConfirmationSheetHeight / 2) {
                   setState(() {
                     showRerouteConfirmationSheet = false;
                     rerouteConfirmationDragOffset = 0;
-                    _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+                    _circles.removeWhere(
+                      (c) => c.circleId.value.startsWith('sensor'),
+                    );
                   });
                 } else {
                   setState(() {
@@ -2247,8 +2603,8 @@ class _MapScreenState extends State<MapScreen> {
                   boxShadow: [
                     BoxShadow(
                       color: Colors.black26,
-                      blurRadius: 10,
-                      offset: Offset(0, -2),
+                      blurRadius: 12,
+                      offset: Offset(0, -3),
                     ),
                   ],
                 ),
@@ -2257,14 +2613,12 @@ class _MapScreenState extends State<MapScreen> {
                   padding: const EdgeInsets.all(20),
                   child: LayoutBuilder(
                     builder: (context, constraints) {
-                      // AUTO-DETECT HEIGHT
                       WidgetsBinding.instance.addPostFrameCallback((_) {
                         final renderBox =
-                        rerouteConfirmKey.currentContext?.findRenderObject() as RenderBox?;
-
+                            rerouteConfirmKey.currentContext?.findRenderObject()
+                                as RenderBox?;
                         if (renderBox != null) {
                           final newHeight = renderBox.size.height;
-
                           if (rerouteConfirmationSheetHeight != newHeight) {
                             setState(() {
                               rerouteConfirmationSheetHeight = newHeight;
@@ -2273,16 +2627,10 @@ class _MapScreenState extends State<MapScreen> {
                         }
                       });
 
-                      final sensor = selectedSensorId != null
-                          ? sensors[selectedSensorId]!
-                          : null;
-                      final data = sensor?['sensorData'];
-
                       return Column(
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          // DRAG HANDLE
                           Center(
                             child: Container(
                               width: 40,
@@ -2293,26 +2641,42 @@ class _MapScreenState extends State<MapScreen> {
                               ),
                             ),
                           ),
-                          const SizedBox(height: 15),
 
-                          // HEADER
+                          const SizedBox(height: 14),
+
                           Row(
                             children: [
-                              const Icon(Icons.location_pin,
-                                  size: 32, color: color1_2),
+                              Icon(
+                                Icons.alt_route_rounded,
+                                size: 30,
+                                color: colorPrimaryMid,
+                              ),
                               const SizedBox(width: 10),
                               Expanded(
                                 child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
-                                    const Text(
-                                      "Route Adjustment", //Set Alternate Route
-                                      style: TextStyle(
-                                          fontSize: 20, fontWeight: FontWeight.bold),
+                                    Text(
+                                      (savedPinPosition != null &&
+                                              savedPinPosition != "null")
+                                          ? "Route Adjustment"
+                                          : "Create Reroute",
+                                      style: const TextStyle(
+                                        fontFamily: 'AvenirNext',
+                                        fontSize: 20,
+                                        fontWeight: FontWeight.w700,
+                                        color: colorTextPrimary,
+                                      ),
                                     ),
                                     Text(
-                                      "Confirm to create a detour.", //Tap Confirm to place a pin and create an alternate route.”
-                                      style: TextStyle(color: Colors.grey[600]),
+                                      (savedPinPosition != null &&
+                                              savedPinPosition != "null")
+                                          ? "Confirm to generate a safer alternate path."
+                                          : "Confirm to select destination to reroute",
+                                      style: TextStyle(
+                                        fontSize: 13,
+                                        color: Colors.grey[600],
+                                      ),
                                     ),
                                   ],
                                 ),
@@ -2320,82 +2684,59 @@ class _MapScreenState extends State<MapScreen> {
                             ],
                           ),
 
-                          const SizedBox(height: 15),
+                          const SizedBox(height: 18),
 
-                          // CANCEL & CONFIRM BUTTONS
                           Row(
                             children: [
-                              // CANCEL BUTTON
                               Expanded(
-                                child: SizedBox(
-                                  height: 50,
-                                  child: OutlinedButton(
-                                    style: OutlinedButton.styleFrom(
-                                      side: const BorderSide(
-                                          color: color1, width: 2),
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                    onPressed: () {
-                                      setState(() {
-                                        showRerouteConfirmationSheet = false;
-                                      });
-                                    },
-                                    child: const Text(
-                                      "IGNORE",
-                                      style: TextStyle(
-                                        color: color1,
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 16,
-                                      ),
-                                    ),
-                                  ),
+                                child: secondaryButton(
+                                  text: "IGNORE",
+                                  onTap: () {
+                                    setState(() {
+                                      showRerouteConfirmationSheet = false;
+                                    });
+                                  },
                                 ),
                               ),
-
                               const SizedBox(width: 12),
-
-                              // CONFIRM BUTTON
                               Expanded(
-                                child: SizedBox(
-                                  height: 50,
-                                  child: ElevatedButton(
-                                    style: ElevatedButton.styleFrom(
-                                      backgroundColor: color1,
-                                      shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(12),
-                                      ),
-                                    ),
-                                    onPressed: () {
-                                      setState(() {
-                                        normalRouting = false;
-                                        showRerouteConfirmationSheet = false;
-                                      });
+                                child: primaryButton(
+                                  text: "REROUTE",
+                                  onTap: () {
+                                    final hasValidPin =
+                                        savedPinPosition != null &&
+                                        savedPinPosition != "null";
+                                    setState(() {
+                                      normalRouting = false;
+                                      showRerouteConfirmationSheet = false;
+                                      isRerouting = true;
+                                    });
 
-                                      // 2–3. After UI updates, draw new route
-                                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                                        _drawRoute(
-                                          LatLng(currentPosition!.latitude, currentPosition!.longitude),
-                                          savedPinMarker!.position,
-                                        );
+                                    if (!hasValidPin) {
+                                      setState(() {
+                                        searchStartLocation = false;
+                                        searchEndLocation = true;
                                       });
-                                    },
-                                    child: const Text(
-                                      "REROUTE",
-                                      style: TextStyle(
-                                        fontSize: 18,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.white,
-                                      ),
-                                    ),
-                                  ),
+                                      openPlaceSearch();
+                                    } else {
+                                      WidgetsBinding.instance
+                                          .addPostFrameCallback((_) {
+                                            _drawRoute(
+                                              LatLng(
+                                                currentPosition!.latitude,
+                                                currentPosition!.longitude,
+                                              ),
+                                              savedPinMarker!.position,
+                                            );
+                                          });
+                                    }
+                                  },
                                 ),
                               ),
                             ],
                           ),
 
-                          const SizedBox(height: 40), // bottom padding
+                          const SizedBox(height: 40),
                         ],
                       );
                     },
@@ -2422,11 +2763,15 @@ class _MapScreenState extends State<MapScreen> {
                       cancelPinSelection();
                       showDirectionSheet = !showDirectionSheet;
                     });
-                    _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+                    _circles.removeWhere(
+                      (c) => c.circleId.value.startsWith('sensor'),
+                    );
                   },
                   label: 'Directions',
                   imagePath: 'assets/images/icons/pin.png',
-                  iconColor: (showDirectionSheet) ? color1 : color2,
+                  iconColor: (showDirectionSheet)
+                      ? colorPrimaryMid
+                      : colorPrimaryDeep,
                 ),
                 bottomButton(
                   onTap: () {
@@ -2438,11 +2783,15 @@ class _MapScreenState extends State<MapScreen> {
                       cancelPinSelection();
                       showSensorSettingsSheet = !showSensorSettingsSheet;
                     });
-                    _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+                    _circles.removeWhere(
+                      (c) => c.circleId.value.startsWith('sensor'),
+                    );
                   },
                   label: 'Sensor',
                   imagePath: 'assets/images/icons/sensor.png',
-                  iconColor: (showSensorSettingsSheet) ? color1 : color2,
+                  iconColor: (showSensorSettingsSheet)
+                      ? colorPrimaryMid
+                      : colorPrimaryDeep,
                 ),
                 bottomButton(
                   onTap: () {
@@ -2453,31 +2802,41 @@ class _MapScreenState extends State<MapScreen> {
                         showSensorSettingsSheet = false;
                         showPinConfirmationSheet = false;
                         cancelPinSelection();
-                        showRerouteConfirmationSheet = !showRerouteConfirmationSheet;
+                        showRerouteConfirmationSheet =
+                            !showRerouteConfirmationSheet;
                       });
-                      _circles.removeWhere((c) => c.circleId.value.startsWith('sensor'));
+                      _circles.removeWhere(
+                        (c) => c.circleId.value.startsWith('sensor'),
+                      );
                     }
                   },
                   label: 'Alerts',
                   imagePath: 'assets/images/icons/exclamation.png',
-                  iconColor: (showRerouteConfirmationSheet) ? color1 : (displayAlert) ? Colors.red : color2,
-                  buttonColor: (showRerouteConfirmationSheet) ? Colors.white : (displayAlert) ? color_alert : Colors.white,
+                  iconColor: (showRerouteConfirmationSheet)
+                      ? colorPrimaryMid
+                      : (displayAlert)
+                      ? Colors.red
+                      : colorPrimaryDeep,
+                  buttonColor: (showRerouteConfirmationSheet)
+                      ? Colors.white
+                      : (displayAlert)
+                      ? colorAlertBg
+                      : Colors.white,
                 ),
               ],
             ),
           ),
 
           ///Burger menu
-
           Positioned(
             top: 20,
             left: 10,
             child: AnimatedOpacity(
               duration: const Duration(milliseconds: 300), // fade duration
-              opacity: showMainSheet ? 0.0 : 1.0,         // fade out when true
+              opacity: showMainSheet ? 0.0 : 1.0, // fade out when true
               curve: Curves.easeInOut,
               child: IgnorePointer(
-                ignoring: showMainSheet,                  // disable tap when hidden
+                ignoring: showMainSheet, // disable tap when hidden
                 child: GestureDetector(
                   onTap: () {
                     setState(() {
@@ -2488,13 +2847,18 @@ class _MapScreenState extends State<MapScreen> {
                       showRerouteConfirmationSheet = false;
 
                       showMainSheet = true;
+                      tempSelectedVehicle = selectedVehicle;
+                      cancelPinSelection();
                     });
+                    _circles.removeWhere(
+                      (c) => c.circleId.value.startsWith('sensor'),
+                    );
                   },
                   child: Container(
                     height: 40,
                     width: 40,
                     decoration: BoxDecoration(
-                      color: color1,
+                      color: colorPrimaryMid,
                       borderRadius: BorderRadius.circular(50),
                     ),
                     child: Center(
@@ -2513,95 +2877,97 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
 
-
-
-
-          ///New Added
           ///Banner
           AnimatedPositioned(
             duration: const Duration(milliseconds: 300),
             curve: Curves.easeInOut,
-            top: showMainSheet ? 20 : -200, // 👈 slide up when closing
+            top: showMainSheet ? 20 : -200,
             left: 0,
             right: 0,
-
             child: AnimatedOpacity(
               duration: const Duration(milliseconds: 200),
-              opacity: showMainSheet ? 1 : 0, // 👈 fade out
-              child: Container(
-                margin: const EdgeInsets.symmetric(horizontal: 15),
-                padding: const EdgeInsets.symmetric(vertical: 5),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      color1_3,
-                      color1,
-                    ],
+              opacity: showMainSheet ? 1 : 0,
+              child: Center(
+                child: Container(
+                  margin: const EdgeInsets.symmetric(horizontal: 15),
+                  constraints: const BoxConstraints(maxWidth: 400),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 20,
+                    vertical: 16,
                   ),
-                  borderRadius: BorderRadius.circular(15),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Colors.black.withOpacity(0.15),
-                      spreadRadius: 1,
-                      blurRadius: 3,
-                      offset: const Offset(0, 0),
-                    ),
-                  ],
-                ),
-
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    Column(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: const [
-                        Text(
-                          'Flood update\nto your zone',
-                          style: TextStyle(fontSize: 24),
-                        ),
-                        SizedBox(height: 10),
-                        Text(
-                          'Stay alert, stay safe',
-                          style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w500,
-                            color: Colors.white,
-                          ),
-                        ),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.blueAccent.shade400,
+                        Colors.lightBlue.shade300,
                       ],
                     ),
-
-                    Image.asset(
-                      'assets/images/Flood-amico.png',
-                      width: 140,
-                      height: 140,
-                      fit: BoxFit.cover,
-                    ),
-                  ],
+                    borderRadius: BorderRadius.circular(20),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.15),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: const [
+                            Text(
+                              'Flood Update\nin Your Zone',
+                              style: TextStyle(
+                                fontFamily: 'AvenirNext',
+                                fontSize: 22,
+                                fontWeight: FontWeight.w700,
+                                color: Colors.white,
+                                height: 1.2,
+                              ),
+                            ),
+                            SizedBox(height: 8),
+                            Text(
+                              'Stay alert, stay safe',
+                              style: TextStyle(
+                                fontFamily: 'AvenirNext',
+                                fontSize: 15,
+                                fontWeight: FontWeight.w500,
+                                color: Colors.white70,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Image.asset(
+                        'assets/images/Flood-amico.png',
+                        width: 120,
+                        height: 120,
+                        fit: BoxFit.contain,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
           ),
 
-
-
-          ///New Added
           /// Main Sheet
           if (showMainSheet)
             DraggableScrollableSheet(
-              initialChildSize: 0.45, // start mid-screen
-              minChildSize: 0.25,     // drag down to close
-              maxChildSize: 0.95,     // full screen
+              initialChildSize: 0.45,
+              minChildSize: 0.25,
+              maxChildSize: 0.95,
               snap: true,
               snapSizes: const [0.45, 0.95],
-
               builder: (context, scrollController) {
                 return GestureDetector(
-                  // Drag from top handle
                   onVerticalDragUpdate: (details) {
-                    // Only allow dragging if a vehicle is selected
                     if (selectedVehicle.isNotEmpty) {
                       scrollController.jumpTo(
                         scrollController.offset - details.delta.dy,
@@ -2610,213 +2976,365 @@ class _MapScreenState extends State<MapScreen> {
                   },
                   child: NotificationListener<DraggableScrollableNotification>(
                     onNotification: (notification) {
-                      // Only allow closing if a vehicle is selected
-                      if (selectedVehicle.isNotEmpty && notification.extent <= 0.25) {
+                      if (selectedVehicle.isNotEmpty &&
+                          notification.extent <= 0.25) {
                         setState(() => showMainSheet = false);
                       }
                       return true;
                     },
                     child: Container(
-                      decoration: const BoxDecoration(
-                        color: Colors.white,
-                        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                      decoration: BoxDecoration(
+                        color: Colors.white, // clean white background
+                        borderRadius: const BorderRadius.vertical(
+                          top: Radius.circular(24),
+                        ),
                         boxShadow: [
                           BoxShadow(
                             color: Colors.black26,
-                            blurRadius: 10,
-                            offset: Offset(0, -2),
+                            blurRadius: 12,
+                            offset: const Offset(0, -3),
                           ),
                         ],
                       ),
                       child: Column(
                         children: [
-                          // DRAG HANDLE
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 12),
                           Center(
                             child: Container(
-                              width: 40,
-                              height: 5,
+                              width: 50,
+                              height: 6,
                               decoration: BoxDecoration(
-                                color: Colors.grey,
-                                borderRadius: BorderRadius.circular(10),
+                                color: Colors.grey[400],
+                                borderRadius: BorderRadius.circular(12),
                               ),
                             ),
                           ),
-                          const SizedBox(height: 10),
+                          const SizedBox(height: 12),
 
-                          // SCROLLABLE CONTENT
                           Expanded(
                             child: SingleChildScrollView(
                               controller: scrollController,
                               physics: const ClampingScrollPhysics(),
-                              padding: const EdgeInsets.all(20),
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 20,
+                                vertical: 0,
+                              ),
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
                                   // HEADER
                                   Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
                                     children: [
-                                      Icon(Icons.emoji_transportation,
-                                          size: 32, color: color1_2),
-                                      const SizedBox(width: 10),
+                                      Icon(
+                                        Icons.directions_car_filled,
+                                        size: 34,
+                                        color: Colors.blueAccent,
+                                      ),
+                                      const SizedBox(width: 12),
                                       Expanded(
                                         child: Column(
-                                          crossAxisAlignment: CrossAxisAlignment.start,
-                                          children: [
-                                            const Text(
-                                              "Select Vehicle",
+                                          crossAxisAlignment:
+                                              CrossAxisAlignment.start,
+                                          children: const [
+                                            Text(
+                                              "Pick a Vehicle",
                                               style: TextStyle(
+                                                fontFamily: 'AvenirNext',
                                                 fontSize: 20,
-                                                fontWeight: FontWeight.bold,
+                                                fontWeight:
+                                                    FontWeight.w700, // Bold
+                                                color: Colors.black87,
                                               ),
                                             ),
+                                            SizedBox(height: 2),
                                             Text(
-                                              "Description",
-                                              style: TextStyle(color: Colors.grey[600]),
+                                              "Choose from the options below",
+                                              style: TextStyle(
+                                                fontFamily: 'AvenirNext',
+                                                fontSize: 14,
+                                                fontWeight:
+                                                    FontWeight.w400, // Regular
+                                                color: Colors.black54,
+                                              ),
                                             ),
                                           ],
                                         ),
                                       ),
                                     ],
                                   ),
-
-                                  const SizedBox(height: 20),
+                                  const SizedBox(height: 18),
 
                                   // VEHICLE SELECTION
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.spaceAround,
-                                    children: [
-                                      vehicleSelection(
-                                        name: 'Motorcycle',
-                                        imagePath:
-                                        'assets/images/3d-images/Motorcycle-3d.png',
-                                        onTap: () {
-                                          setState(() => selectedVehicle = 'Motorcycle');
-                                          VehicleInfoPopup.show(context, "Motorcycle",
-                                              onConfirm: () {
-                                                setState(() {
-                                                  showMainSheet = false;
-                                                  showDirectionSheet = true;
-                                                  _goToUser();
-                                                });
+                                  SizedBox(
+                                    height: 140,
+                                    child: SingleChildScrollView(
+                                      scrollDirection: Axis.horizontal,
+                                      physics: const BouncingScrollPhysics(),
+                                      child: Row(
+                                        children: [
+                                          vehicleSelection(
+                                            name: 'Pedestrian',
+                                            imagePath:
+                                                'assets/images/vehicle/pedestrian.png',
+                                            highlightColor: Colors.blueAccent,
+                                            onTap: () {
+                                              setState(() {
+                                                tempSelectedVehicle =
+                                                    selectedVehicle;
+                                                selectedVehicle = 'Pedestrian';
                                               });
-                                        },
-                                      ),
-                                      vehicleSelection(
-                                        name: 'Car',
-                                        imagePath: 'assets/images/3d-images/car-3d.png',
-                                        onTap: () {
-                                          setState(() => selectedVehicle = 'Car');
-                                          VehicleInfoPopup.show(context, "Car",
-                                              onConfirm: () {
-                                                setState(() {
-                                                  showMainSheet = false;
-                                                  showDirectionSheet = true;
-                                                  _goToUser();
-                                                });
+                                              VehicleInfoPopup.show(
+                                                context,
+                                                "Pedestrian",
+                                                onConfirm: (v) {
+                                                  setState(() {
+                                                    selectedVehicle =
+                                                        'Pedestrian';
+                                                    showMainSheet = false;
+                                                    showDirectionSheet = true;
+                                                    _goToUser();
+                                                    fetchDataForAllSensors();
+                                                  });
+                                                },
+                                                onCancel: (v) {
+                                                  setState(() {
+                                                    selectedVehicle =
+                                                        tempSelectedVehicle;
+                                                  });
+                                                },
+                                              );
+                                            },
+                                          ),
+                                          const SizedBox(width: 16),
+                                          vehicleSelection(
+                                            name: 'Bicycle',
+                                            imagePath:
+                                                'assets/images/vehicle/bicycle.png',
+                                            highlightColor: Colors.blueAccent,
+                                            onTap: () {
+                                              setState(() {
+                                                tempSelectedVehicle =
+                                                    selectedVehicle;
+                                                selectedVehicle = 'Bicycle';
+                                                selectedVehicleType = "2Wheels";
                                               });
-                                        },
-                                      ),
-                                      vehicleSelection(
-                                        name: 'Truck',
-                                        imagePath: 'assets/images/3d-images/truck-3d.png',
-                                        onTap: () {
-                                          setState(() => selectedVehicle = 'Truck');
-                                          VehicleInfoPopup.show(context, "Truck",
-                                              onConfirm: () {
-                                                setState(() {
-                                                  showMainSheet = false;
-                                                  showDirectionSheet = true;
-                                                  _goToUser();
-                                                });
+                                              VehicleInfoPopup.show(
+                                                context,
+                                                "Bicycle",
+                                                onConfirm: (v) {
+                                                  setState(() {
+                                                    selectedVehicle = 'Bicycle';
+                                                    showMainSheet = false;
+                                                    showDirectionSheet = true;
+                                                    _goToUser();
+                                                    fetchDataForAllSensors();
+                                                  });
+                                                },
+                                                onCancel: (v) {
+                                                  setState(() {
+                                                    selectedVehicle =
+                                                        tempSelectedVehicle;
+                                                  });
+                                                },
+                                              );
+                                            },
+                                          ),
+                                          const SizedBox(width: 16),
+                                          vehicleSelection(
+                                            name: 'Motorcycle',
+                                            imagePath:
+                                                'assets/images/vehicle/motorcycle.png',
+                                            highlightColor: Colors.blueAccent,
+                                            onTap: () {
+                                              setState(() {
+                                                tempSelectedVehicle =
+                                                    selectedVehicle;
+                                                selectedVehicle = 'Motorcycle';
+                                                selectedVehicleType =
+                                                    "Motorcycle";
                                               });
-                                        },
+                                              VehicleInfoPopup.show(
+                                                context,
+                                                "Motorcycle",
+                                                onConfirm: (v) {
+                                                  setState(() {
+                                                    selectedVehicle =
+                                                        'Motorcycle';
+                                                    showMainSheet = false;
+                                                    showDirectionSheet = true;
+                                                    _goToUser();
+                                                    fetchDataForAllSensors();
+                                                  });
+                                                },
+                                                onCancel: (v) {
+                                                  setState(() {
+                                                    selectedVehicle =
+                                                        tempSelectedVehicle;
+                                                  });
+                                                },
+                                              );
+                                            },
+                                          ),
+                                          const SizedBox(width: 16),
+                                          vehicleSelection(
+                                            name: 'Car',
+                                            imagePath:
+                                                'assets/images/vehicle/car.png',
+                                            highlightColor: Colors.blueAccent,
+                                            onTap: () {
+                                              setState(() {
+                                                tempSelectedVehicle =
+                                                    selectedVehicle;
+                                                selectedVehicle = 'Car';
+                                              });
+                                              VehicleInfoPopup.show(
+                                                context,
+                                                "Car",
+                                                onConfirm: (v) {
+                                                  setState(() {
+                                                    selectedVehicle = 'Car';
+                                                    showMainSheet = false;
+                                                    showDirectionSheet = true;
+                                                    _goToUser();
+                                                    fetchDataForAllSensors();
+                                                  });
+                                                },
+                                                onCancel: (v) {
+                                                  setState(() {
+                                                    selectedVehicle =
+                                                        tempSelectedVehicle;
+                                                  });
+                                                },
+                                              );
+                                            },
+                                          ),
+                                          const SizedBox(width: 16),
+                                          vehicleSelection(
+                                            name: 'Truck',
+                                            imagePath:
+                                                'assets/images/vehicle/truck.png',
+                                            highlightColor: Colors.blueAccent,
+                                            onTap: () {
+                                              setState(() {
+                                                tempSelectedVehicle =
+                                                    selectedVehicle;
+                                                selectedVehicle = 'Truck';
+                                              });
+                                              VehicleInfoPopup.show(
+                                                context,
+                                                "Truck",
+                                                onConfirm: (v) {
+                                                  setState(() {
+                                                    selectedVehicle = 'Truck';
+                                                    showMainSheet = false;
+                                                    showDirectionSheet = true;
+                                                    _goToUser();
+                                                    fetchDataForAllSensors();
+                                                  });
+                                                },
+                                                onCancel: (v) {
+                                                  setState(() {
+                                                    selectedVehicle =
+                                                        tempSelectedVehicle;
+                                                  });
+                                                },
+                                              );
+                                            },
+                                          ),
+                                        ],
                                       ),
-                                    ],
+                                    ),
                                   ),
 
-                                  const SizedBox(height: 20),
+                                  const SizedBox(height: 22),
 
-
+                                  // RELATED SECTION
                                   const Text(
                                     'Related',
                                     style: TextStyle(
-                                        fontSize: 20, fontWeight: FontWeight.w600),
+                                      fontFamily: 'AvenirNext',
+                                      fontSize: 20,
+                                      fontWeight: FontWeight.w600, // Demi
+                                      color: Colors.black87,
+                                    ),
                                   ),
-                                  const SizedBox(height: 15),
+                                  const SizedBox(height: 16),
 
-                                  ///Weather Card
+                                  // WEATHER CARD
                                   Container(
-                                    padding: EdgeInsets.all(15),
+                                    padding: const EdgeInsets.all(16),
                                     decoration: BoxDecoration(
-                                      gradient: LinearGradient(
-                                        begin: Alignment.topLeft,
-                                        end: Alignment.bottomRight,
-                                        colors: [
-                                          Colors.white,
-                                          Colors.white70,
-                                        ],
-                                      ),
+                                      color: Colors.blue[50],
+                                      borderRadius: BorderRadius.circular(16),
                                       boxShadow: [
                                         BoxShadow(
-                                          color: Colors.black.withOpacity(0.15),
-                                          spreadRadius: 1,
-                                          blurRadius: 3,
-                                          offset: const Offset(0, 0),
+                                          color: Colors.black12,
+                                          blurRadius: 6,
+                                          offset: const Offset(0, 2),
                                         ),
                                       ],
-                                      borderRadius: BorderRadius.circular(15),
                                     ),
                                     child: Row(
-                                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                      mainAxisAlignment:
+                                          MainAxisAlignment.spaceAround,
                                       children: [
-                                        // Weather Icon
                                         Column(
                                           children: [
                                             if (iconCode.isNotEmpty)
                                               Image.asset(
                                                 'assets/images/weather/$iconCode.png',
-                                                width: 100,
-                                                height: 100,
+                                                width: 90,
+                                                height: 90,
                                                 fit: BoxFit.contain,
                                               )
                                             else
                                               SizedBox(
-                                                width: 100,
-                                                height: 100,
+                                                width: 90,
+                                                height: 90,
                                                 child: Center(
-                                                  child: CircularProgressIndicator(strokeWidth: 2),
+                                                  child:
+                                                      CircularProgressIndicator(
+                                                        strokeWidth: 2,
+                                                        color:
+                                                            Colors.blueAccent,
+                                                      ),
                                                 ),
                                               ),
                                           ],
                                         ),
-
-                                        // Weather Info
                                         Column(
                                           children: [
                                             Text(
-                                              currentTime.isNotEmpty ? currentTime : '--:--',
-                                              style: TextStyle(
+                                              currentTime.isNotEmpty
+                                                  ? currentTime
+                                                  : '--:--',
+                                              style: const TextStyle(
+                                                fontFamily: 'AvenirNext',
                                                 fontSize: 15,
                                                 fontWeight: FontWeight.w600,
                                               ),
                                             ),
-
                                             Text(
-                                              // ignore: unnecessary_null_comparison
-                                              temperature != null ? '${temperature}°C' : '--°C',
-                                              style: TextStyle(
-                                                color: color1,
+                                              temperature != null
+                                                  ? '${temperature}°C'
+                                                  : '--°C',
+                                              style: const TextStyle(
+                                                fontFamily: 'AvenirNext',
+                                                color: Colors.blueAccent,
                                                 fontSize: 30,
-                                                fontWeight: FontWeight.w700,
+                                                fontWeight: FontWeight.w800,
                                               ),
                                             ),
-
                                             Text(
-                                              weatherDescription.isNotEmpty ? weatherDescription : 'Loading...',
-                                              style: TextStyle(
+                                              weatherDescription.isNotEmpty
+                                                  ? weatherDescription
+                                                  : 'Loading...',
+                                              style: const TextStyle(
+                                                fontFamily: 'AvenirNext',
                                                 fontSize: 15,
-                                                fontWeight: FontWeight.w600,
+                                                fontWeight: FontWeight.w500,
                                               ),
                                             ),
                                           ],
@@ -2824,9 +3342,9 @@ class _MapScreenState extends State<MapScreen> {
                                       ],
                                     ),
                                   ),
+                                  const SizedBox(height: 16),
 
-                                  SizedBox(height: 15),
-
+                                  // BOTTOM CARDS
                                   Row(
                                     children: [
                                       // LEFT BIG CARD
@@ -2834,24 +3352,29 @@ class _MapScreenState extends State<MapScreen> {
                                         flex: 4,
                                         child: GestureDetector(
                                           onTap: () {
-                                            Navigator.pushNamed(context, '/recent-alert');
+                                            Navigator.pushNamed(
+                                              context,
+                                              '/recent-alert',
+                                            );
                                           },
                                           child: Container(
                                             height: 120,
                                             padding: const EdgeInsets.all(12),
                                             decoration: BoxDecoration(
-                                              color: const Color(0xFF8670EA),
-                                              borderRadius: BorderRadius.circular(12),
+                                              color: Colors.blueAccent,
+                                              borderRadius:
+                                                  BorderRadius.circular(16),
                                               boxShadow: [
                                                 BoxShadow(
-                                                  color: Colors.black.withOpacity(0.12),
+                                                  color: Colors.black12,
                                                   blurRadius: 6,
                                                   offset: const Offset(0, 3),
                                                 ),
                                               ],
                                             ),
                                             child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.center,
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.center,
                                               children: [
                                                 Expanded(
                                                   child: Image.asset(
@@ -2859,10 +3382,11 @@ class _MapScreenState extends State<MapScreen> {
                                                     fit: BoxFit.contain,
                                                   ),
                                                 ),
-                                                Text(
+                                                const Text(
                                                   "Recent Alerts",
                                                   textAlign: TextAlign.center,
-                                                  style: const TextStyle(
+                                                  style: TextStyle(
+                                                    fontFamily: 'AvenirNext',
                                                     color: Colors.white,
                                                     fontSize: 18,
                                                     fontWeight: FontWeight.w600,
@@ -2873,8 +3397,7 @@ class _MapScreenState extends State<MapScreen> {
                                           ),
                                         ),
                                       ),
-
-                                      const SizedBox(width: 10),
+                                      const SizedBox(width: 12),
 
                                       // RIGHT COLUMN
                                       Expanded(
@@ -2883,22 +3406,33 @@ class _MapScreenState extends State<MapScreen> {
                                           children: [
                                             GestureDetector(
                                               onTap: () {
-                                                Navigator.pushNamed(context, '/flood-tips');
+                                                Navigator.pushNamed(
+                                                  context,
+                                                  '/flood-tips',
+                                                );
                                               },
                                               child: _smallCard(
-                                                color: const Color(0xFF40DCD1),
-                                                image: 'assets/images/3d-images/rescue-3d.png',
+                                                color: Colors
+                                                    .lightBlueAccent
+                                                    .shade100,
+                                                image:
+                                                    'assets/images/3d-images/rescue-3d.png',
                                                 text: "Flood Tips",
                                               ),
                                             ),
-                                            const SizedBox(height: 10),
+                                            const SizedBox(height: 12),
                                             GestureDetector(
                                               onTap: () {
-                                                Navigator.pushNamed(context, '/rescue-call');
+                                                Navigator.pushNamed(
+                                                  context,
+                                                  '/rescue-call',
+                                                );
                                               },
                                               child: _smallCard(
-                                                color: const Color(0xFFE59864),
-                                                image: 'assets/images/3d-images/help-3d.png',
+                                                color:
+                                                    Colors.blueAccent.shade100,
+                                                image:
+                                                    'assets/images/3d-images/help-3d.png',
                                                 text: "Rescue Call",
                                               ),
                                             ),
@@ -2908,6 +3442,243 @@ class _MapScreenState extends State<MapScreen> {
                                     ],
                                   ),
 
+                                  const SizedBox(height: 30),
+
+                                  Container(
+                                    width: double.infinity,
+                                    color: Colors.transparent,
+                                    child: StatefulBuilder(
+                                      builder: (context, setCarouselState) {
+                                        const Color designBorderColor = Color(
+                                          0xff3fa9f5,
+                                        );
+
+                                        return Column(
+                                          mainAxisSize: MainAxisSize
+                                              .min, // Shrinks column to fit its children
+                                          children: [
+                                            /// 1. Swipeable Cards Carousel
+                                            // Instead of a fixed heightSizedBox, we use an Intrinsic height constraint wrapper.
+                                            // Note: Standard PageView ignores IntrinsicHeight unless given a bounding constraint.
+                                            // To safely ensure it doesn't crash from overflow, we set a safe maximum or use an
+                                            // expandable layout. Here is the clean structural adjustment:
+                                            ConstrainedBox(
+                                              constraints: const BoxConstraints(
+                                                minHeight:
+                                                    150, // Minimum height you're comfortable with
+                                                maxHeight:
+                                                    400, // Maximum safe budget so it doesn't expand forever
+                                              ),
+                                              child: SizedBox(
+                                                // We use a reasonable fallback height, but to make it *truest* to the largest item,
+                                                // you should ideally replace standard PageView with 'ExpandablePageView' from pub.dev.
+                                                height:
+                                                    230, // Optimized to give breathing room for your text content
+                                                width: double.infinity,
+                                                child: PageView.builder(
+                                                  controller:
+                                                      _carouselController,
+                                                  itemCount: _carouselCardCount,
+                                                  onPageChanged: (index) {
+                                                    setCarouselState(() {
+                                                      currentMenuCardPage =
+                                                          index;
+                                                    });
+                                                    _startCarouselTimer();
+                                                  },
+                                                  itemBuilder: (context, index) {
+                                                    return Padding(
+                                                      padding:
+                                                          const EdgeInsets.symmetric(
+                                                            horizontal: 4.0,
+                                                          ),
+                                                      child: Container(
+                                                        decoration: BoxDecoration(
+                                                          image: DecorationImage(
+                                                            image: const AssetImage(
+                                                              'assets/images/wave.png',
+                                                            ),
+                                                            fit: BoxFit.cover,
+                                                            colorFilter:
+                                                                ColorFilter.mode(
+                                                                  Colors.white
+                                                                      .withOpacity(
+                                                                        0.4,
+                                                                      ),
+                                                                  BlendMode
+                                                                      .dstATop,
+                                                                ),
+                                                          ),
+                                                          borderRadius:
+                                                              BorderRadius.circular(
+                                                                14,
+                                                              ),
+                                                          border: Border.all(
+                                                            color:
+                                                                designBorderColor,
+                                                            width: 1.5,
+                                                          ),
+                                                          boxShadow: [
+                                                            BoxShadow(
+                                                              color: Colors
+                                                                  .black
+                                                                  .withOpacity(
+                                                                    0.06,
+                                                                  ),
+                                                              blurRadius: 10,
+                                                              offset:
+                                                                  const Offset(
+                                                                    0,
+                                                                    4,
+                                                                  ),
+                                                            ),
+                                                          ],
+                                                        ),
+                                                        padding:
+                                                            const EdgeInsets.fromLTRB(
+                                                              16,
+                                                              14,
+                                                              16,
+                                                              14,
+                                                            ),
+                                                        // 👇 Wrap with SingleChildScrollView inside the card
+                                                        // to prevent yellow/black strip overflows if content spikes!
+                                                        child: SingleChildScrollView(
+                                                          physics:
+                                                              const NeverScrollableScrollPhysics(), // Keeps it clean unless overflowing
+                                                          child: Center(
+                                                            child:
+                                                                buildCardContent(
+                                                                  index,
+                                                                ),
+                                                          ),
+                                                        ),
+                                                      ),
+                                                    );
+                                                  },
+                                                ),
+                                              ),
+                                            ),
+
+                                            const SizedBox(height: 12),
+
+                                            /// 2. Centered Pagination Capsule
+                                            Container(
+                                              padding:
+                                                  const EdgeInsets.symmetric(
+                                                    horizontal: 12,
+                                                    vertical: 6,
+                                                  ),
+                                              decoration: BoxDecoration(
+                                                color: Colors.black.withOpacity(
+                                                  0.50,
+                                                ),
+                                                borderRadius:
+                                                    BorderRadius.circular(20),
+                                              ),
+                                              child: Row(
+                                                mainAxisSize: MainAxisSize.min,
+                                                mainAxisAlignment:
+                                                    MainAxisAlignment.center,
+                                                children: List.generate(
+                                                  _carouselCardCount,
+                                                  (
+                                                    dotIndex,
+                                                  ) => AnimatedContainer(
+                                                    duration: const Duration(
+                                                      milliseconds: 250,
+                                                    ),
+                                                    margin:
+                                                        const EdgeInsets.symmetric(
+                                                          horizontal: 4,
+                                                        ),
+                                                    height: 7,
+                                                    width:
+                                                        currentMenuCardPage ==
+                                                            dotIndex
+                                                        ? 18
+                                                        : 7,
+                                                    decoration: BoxDecoration(
+                                                      color: Colors.white
+                                                          .withOpacity(
+                                                            currentMenuCardPage ==
+                                                                    dotIndex
+                                                                ? 1.0
+                                                                : 0.4,
+                                                          ),
+                                                      borderRadius:
+                                                          BorderRadius.circular(
+                                                            4,
+                                                          ),
+                                                    ),
+                                                  ),
+                                                ),
+                                              ),
+                                            ),
+                                          ],
+                                        );
+                                      },
+                                    ),
+                                  ),
+
+                                  const SizedBox(height: 30),
+                                  const Divider(
+                                    color: Colors.grey,
+                                    thickness: 1,
+                                    indent: 20,
+                                    endIndent: 20,
+                                  ),
+                                  const SizedBox(height: 30),
+
+                                  primaryButton(
+                                    text: "Clear Route",
+                                    onTap: () {
+                                      if (selectedVehicle.isEmpty) {
+                                        showSelectVehicleToast(context);
+                                        return;
+                                      }
+                                      setState(() {
+                                        _markers.removeWhere(
+                                          (m) =>
+                                              m.markerId.value == 'start_pin' ||
+                                              m.markerId.value == 'tapped_pin',
+                                        );
+
+                                        savedPinMarker = null;
+                                        savedPinPosition = null;
+                                        savedPlace = {
+                                          "name": "",
+                                          "location": LatLng(0.0, 0.0),
+                                        };
+
+                                        savedStartMarker = null;
+                                        savedStartPosition = null;
+                                        savedStartPlace = {
+                                          "name": "",
+                                          "location": LatLng(0.0, 0.0),
+                                        };
+
+                                        _polylines.clear();
+                                        _circles.clear();
+                                        normalRouting = true;
+                                        showMainSheet = false;
+                                        showDirectionSheet = true;
+
+                                        _goToUser();
+                                      });
+                                    },
+                                  ),
+
+                                  const SizedBox(height: 16),
+
+                                  primaryButton2(
+                                    text: "Leave Navigation",
+                                    onTap: () {
+                                      SystemNavigator.pop();
+                                    },
+                                  ),
+
+                                  const SizedBox(height: 16),
                                 ],
                               ),
                             ),
@@ -2919,13 +3690,16 @@ class _MapScreenState extends State<MapScreen> {
                 );
               },
             ),
-
-
         ],
       ),
     );
   }
 
+  // ========================================
+  // UI WIDGETS
+  // ========================================
+
+  /// ----- SMALL CARD -----
   Widget _smallCard({
     required Color color,
     required String image,
@@ -2966,39 +3740,52 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
+  /// ----- VEHICLE SELECTION -----
   Widget vehicleSelection({
     required String name,
     required String imagePath,
     required VoidCallback onTap,
+    Color? highlightColor,
   }) {
+    final isSelected = selectedVehicle == name;
     return GestureDetector(
       onTap: onTap,
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
           AnimatedContainer(
-            duration: const Duration(milliseconds: 250), // ✅ smooth color animation
+            duration: const Duration(milliseconds: 250),
             curve: Curves.easeInOut,
             height: 90,
             width: 90,
             decoration: BoxDecoration(
-              color: (selectedVehicle == name) ? color1 : color1_3,
-              borderRadius: BorderRadius.circular(15),
+              color: colorBackground,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isSelected ? Colors.blue : Colors.transparent,
+                width: 2,
+              ),
+              gradient: isSelected
+                  ? LinearGradient(
+                      begin: Alignment.topLeft,
+                      end: Alignment.bottomRight,
+                      colors: [
+                        Colors.blueAccent.shade400,
+                        Colors.lightBlue.shade300,
+                      ],
+                    )
+                  : null,
             ),
-            child: Image.asset(
-              imagePath,
-              fit: BoxFit.contain,
-            ),
+            child: Image.asset(imagePath, fit: BoxFit.contain),
           ),
-
           const SizedBox(height: 6),
-
           Text(
             name,
-            style: const TextStyle(
+            style: TextStyle(
+              fontFamily: 'AvenirNext',
               fontSize: 15,
               fontWeight: FontWeight.w600,
-              color: color1,
+              color: isSelected ? Colors.blueAccent : Colors.black87,
             ),
           ),
         ],
@@ -3006,57 +3793,57 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-
+  /// ----- BOTTOM BUTTON -----
   Widget bottomButton({
     required VoidCallback onTap,
     required String imagePath,
     required String label,
-    Color iconColor = color2,
+    Color iconColor = colorPrimaryDeep,
     Color buttonColor = Colors.white,
   }) {
-    bool _isPressed = false;
-
+    bool isPressed = false;
     return Expanded(
       child: InkWell(
+        splashColor: Colors.transparent,
+        highlightColor: Colors.transparent,
+        hoverColor: Colors.transparent,
         onTap: () {
-          if (_isPressed) return;
-          _isPressed = true;
+          if (isPressed) return;
+          isPressed = true;
           onTap();
           Future.delayed(const Duration(milliseconds: 350), () {
-            _isPressed = false;
+            isPressed = false;
           });
         },
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 300),
           curve: Curves.easeInOut,
-          decoration: BoxDecoration(
-            color: buttonColor,
-            borderRadius: BorderRadius.zero,
-          ),
+          color: buttonColor,
           padding: const EdgeInsets.symmetric(vertical: 8),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               AnimatedSwitcher(
                 duration: const Duration(milliseconds: 300),
-                child: Image.asset(
-                  imagePath,
-                  key: UniqueKey(), // ✅ UniqueKey avoids duplicate key bug
-                  width: 25,
-                  height: 25,
-                  fit: BoxFit.contain,
-                  color: iconColor,
-                  colorBlendMode: BlendMode.srcIn,
+                child: ColorFiltered(
+                  key: ValueKey(iconColor),
+                  colorFilter: ColorFilter.mode(iconColor, BlendMode.srcIn),
+                  child: Image.asset(
+                    imagePath,
+                    width: 25,
+                    height: 25,
+                    fit: BoxFit.contain,
+                  ),
                 ),
               ),
               const SizedBox(height: 2),
               AnimatedDefaultTextStyle(
+                duration: const Duration(milliseconds: 300),
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w500,
                   color: iconColor,
                 ),
-                duration: const Duration(milliseconds: 300),
                 child: Text(label),
               ),
             ],
@@ -3066,9 +3853,7 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 
-
-
-
+  /// ----- SELECT VEHICLE -----
   Widget selectVehicle({
     required String name,
     required String imagePath,
@@ -3080,45 +3865,38 @@ class _MapScreenState extends State<MapScreen> {
         height: 40,
         width: 40,
         decoration: BoxDecoration(
-          color: (selectedVehicle == name) ? color1 : Colors.white,
-          borderRadius: BorderRadius.circular(40 / 2), // perfect circle
+          color: (selectedVehicle == name) ? colorPrimaryMid : Colors.white,
+          borderRadius: BorderRadius.circular(40 / 2),
         ),
         child: Center(
           child: Image.asset(
             imagePath,
-            width: 25, // image slightly smaller than container
+            width: 25,
             height: 25,
             fit: BoxFit.contain,
-            color: (selectedVehicle == name) ? Colors.white : color2, // apply green tint
-            colorBlendMode: BlendMode.srcIn, // ensures the color replaces the original
+            color: (selectedVehicle == name) ? Colors.white : colorPrimaryDeep,
+            colorBlendMode: BlendMode.srcIn,
           ),
         ),
       ),
     );
   }
 
-
-
-
-// Reusable widget
-  Widget _sensorToggle({
+  /// ----- SENSOR TOGGLE CARD -----
+  Widget _sensorToggleCard({
     required String title,
     required String description,
     required bool value,
-    required ValueChanged<bool> onChanged,
+    required Function(bool) onChanged,
   }) {
     return Container(
-      margin: const EdgeInsets.symmetric(vertical: 6),
+      margin: const EdgeInsets.only(bottom: 12),
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black12,
-            blurRadius: 6,
-            offset: Offset(0, 3),
-          ),
+        boxShadow: const [
+          BoxShadow(color: Colors.black12, blurRadius: 5, offset: Offset(0, 2)),
         ],
       ),
       child: Row(
@@ -3129,49 +3907,47 @@ class _MapScreenState extends State<MapScreen> {
               children: [
                 Text(
                   title,
-                  style: TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w600,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
                   ),
                 ),
-                SizedBox(height: 4),
                 Text(
                   description,
-                  style: TextStyle(
-                    fontSize: 12,
-                    color: Colors.grey[600],
+                  style: const TextStyle(
+                    fontFamily: 'AvenirNext',
+                    fontSize: 13,
+                    fontWeight: FontWeight.w400,
+                    color: Colors.black54,
                   ),
                 ),
               ],
             ),
           ),
+          Switch(value: value, activeColor: colorPrimary, onChanged: onChanged),
+        ],
+      ),
+    );
+  }
 
-          Switch(
-            value: value,
-            onChanged: onChanged,
-            activeColor: color1,  // your main app primary color
+  /// ----- INFO ROW -----
+  Widget _infoRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 16)),
+          Text(
+            value,
+            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
           ),
         ],
       ),
     );
   }
 
-
-
-  Widget _infoRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 16)),
-          Text(value,
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-        ],
-      ),
-    );
-  }
-
+  /// ----- STATUS ROW -----
   Widget _statusRow(String label, String value, Color color) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -3192,4 +3968,3 @@ class _MapScreenState extends State<MapScreen> {
     );
   }
 }
-
