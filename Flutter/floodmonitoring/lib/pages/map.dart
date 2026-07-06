@@ -1181,6 +1181,8 @@ class _MapScreenState extends State<MapScreen> {
   bool userTooFar = false;
   bool isRerouting = false;
   List<LatLng> route = [];
+  List<Map<String, dynamic>> existingAvoidZonesBeforeRouting = [];
+
   static const double trimDistance = 25;
 
   void _trimRoute() {
@@ -1208,13 +1210,19 @@ class _MapScreenState extends State<MapScreen> {
 
   /// ----- DRAW ROUTE -----
   void _drawRoute(LatLng start, LatLng end) async {
-    if (route.isEmpty || userTooFar) {
-      userTooFar = false;
+    if (route.isEmpty) {
+      existingAvoidZonesBeforeRouting = buildAvoidZonesFromSensors();
+    }
 
+    if (route.isEmpty || userTooFar || isRerouting) {
+      userTooFar = false;
       List<Map<String, dynamic>> avoidZones = [];
+
       if (isRerouting) {
         isRerouting = false;
         avoidZones = buildAvoidZonesFromSensors();
+      } else {
+        avoidZones = existingAvoidZonesBeforeRouting;
       }
 
       route = await PolylineService.getRoute(
