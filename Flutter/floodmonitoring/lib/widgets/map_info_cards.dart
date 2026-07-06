@@ -82,7 +82,7 @@ Widget buildCardContent(int index) {
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              _buildVehicleItem('${vehicleImgPath}walk.png'),
+              _buildVehicleItem('${vehicleImgPath}pedestrian.png'),
               const SizedBox(width: 14),
               _buildVehicleItem('${vehicleImgPath}bicycle.png'),
               const SizedBox(width: 14),

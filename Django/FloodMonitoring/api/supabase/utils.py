@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from collections import defaultdict
 from dateutil.relativedelta import relativedelta
-
 from .client import supabase
+
+PHT = timezone(timedelta(hours=8))
 
 def push_blynk_data_to_supabase(forecast_data_batch, new_data_batch):
 
@@ -220,15 +221,18 @@ def get_sensor_history_from_supabase(sensor_id):
 
     try:
 
-        now = datetime.now(timezone.utc)
+        now_pht = datetime.now(PHT)
 
-        end_time = now.replace(
+        end_time_pht = now_pht.replace(
             minute=0,
             second=0,
             microsecond=0
         )
 
-        start_time = end_time - timedelta(hours=23)
+        start_time_pht = end_time_pht - timedelta(hours=23)
+
+        start_time = start_time_pht.astimezone(timezone.utc)
+        end_time = end_time_pht.astimezone(timezone.utc)
 
         response = (
             supabase.table("SENSOR_AND_API_DATA")
@@ -247,7 +251,7 @@ def get_sensor_history_from_supabase(sensor_id):
 
             ts = datetime.fromisoformat(
                 entry["timestamp"].replace("Z", "+00:00")
-            )
+            ).astimezone(PHT)
 
             hour_key = ts.strftime("%Y-%m-%d %H:00")
 
@@ -265,7 +269,7 @@ def get_sensor_history_from_supabase(sensor_id):
 
         for i in range(24):
 
-            current_slot = start_time + timedelta(hours=i)
+            current_slot = start_time_pht + timedelta(hours=i)
 
             slot_key = current_slot.strftime("%Y-%m-%d %H:00")
 

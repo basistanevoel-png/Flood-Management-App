@@ -94,10 +94,12 @@ class _InfoState extends State<Info> {
 
       var response = jsonDecode(res.body);
 
+      print(response);
+
       if (res.statusCode == 200 && response['success'] == true) {
         final data = response['data'];
 
-        List<FlSpot> fetchedSpots = (data['hourlyData'] as List)
+        List<FlSpot> fetchedSpots = (data['hourly_data'] as List)
             .map((item) => FlSpot(item['x'].toDouble(), item['y'].toDouble()))
             .toList();
 
@@ -447,7 +449,7 @@ class _InfoState extends State<Info> {
                           ),
                         ),
                         TextSpan(
-                          text: "${touchedSpot.y.toStringAsFixed(2)}",
+                          text: touchedSpot.y.toStringAsFixed(2),
                           style: const TextStyle(
                             color: Colors.blueAccent,
                             fontSize: 18,

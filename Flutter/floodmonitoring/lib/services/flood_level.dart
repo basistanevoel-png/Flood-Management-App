@@ -16,7 +16,6 @@ class FloodLevel {
       final response = await http.get(uri);
 
       final body = jsonDecode(response.body);
-      print("latest sensor data in flood_level.dart: ${body}");
 
       if (response.statusCode == 200 && body["success"] == true) {
         final data = body["data"];
