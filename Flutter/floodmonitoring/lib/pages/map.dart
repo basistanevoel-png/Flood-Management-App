@@ -1208,11 +1208,14 @@ class _MapScreenState extends State<MapScreen> {
 
   /// ----- DRAW ROUTE -----
   void _drawRoute(LatLng start, LatLng end) async {
-    if (route.isEmpty || userTooFar || isRerouting) {
-      isRerouting = false;
+    if (route.isEmpty || userTooFar) {
       userTooFar = false;
 
-      final avoidZones = buildAvoidZonesFromSensors();
+      List<Map<String, dynamic>> avoidZones = [];
+      if (isRerouting) {
+        isRerouting = false;
+        avoidZones = buildAvoidZonesFromSensors();
+      }
 
       route = await PolylineService.getRoute(
         start,

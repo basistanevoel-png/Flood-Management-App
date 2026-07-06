@@ -3,8 +3,8 @@ import 'package:geolocator/geolocator.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 
 /// Testing mode
-bool testingMode = true;
-bool settingPin = false;
+bool testingMode = false;
+bool settingPin = true;
 
 /// Global Variable
 Position? currentPosition;
