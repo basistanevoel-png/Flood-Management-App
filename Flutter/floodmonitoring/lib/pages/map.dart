@@ -111,7 +111,7 @@ class _MapScreenState extends State<MapScreen> {
   /// Time
   String currentTime = '';
   Timer? _timer;
-  int fetchIntervalMinutes = 5;
+  int fetchIntervalMinutes = 1;
   int _secondsCounter = 0;
 
   String tempSelectedVehicle = "";
