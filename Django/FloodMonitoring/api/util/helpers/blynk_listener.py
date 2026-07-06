@@ -24,7 +24,7 @@ def fetch_blynk_data():
         if response.status_code == 200:
             value = float(response.text.strip())
 
-            wlvl_now = max(0.0, sensor['ground_distance'] - value)
+            wlvl_now = max(0.0, sensor['ground_distance'] - value) + 3
 
             payload = {
                 "sensor_id": sensor['sensor_id'],
