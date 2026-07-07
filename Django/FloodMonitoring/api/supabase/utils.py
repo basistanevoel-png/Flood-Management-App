@@ -256,7 +256,7 @@ def get_sensor_history_from_supabase(sensor_id):
             hour_key = ts.strftime("%Y-%m-%d %H:00")
 
             hourly_totals[hour_key].append(
-                float(entry.get("wlvl_now") or 0.0)
+                (float(entry.get("wlvl_now") or 0.0) / 30.48)
             )
 
         history_map = {
