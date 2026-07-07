@@ -38,7 +38,7 @@ class _InfoState extends State<Info> {
     loadSensorHistoryView(sensorViewInfo);
 
     _timer = Timer.periodic(
-      const Duration(seconds: 1),
+      const Duration(minutes: 1),
       (_) => fetchDataForSensor(sensorViewInfo),
     );
   }
