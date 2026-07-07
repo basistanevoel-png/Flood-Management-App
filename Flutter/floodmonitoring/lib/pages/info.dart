@@ -315,7 +315,7 @@ class _InfoState extends State<Info> {
                 : sensor['location'].toString(),
           ),
           _item("Monitoring Radius", "${sensor['radius']} m"),
-          _item("Monitoring Height", "${sensor['height'] * 100} m"),
+          _item("Monitoring Height", "${sensor['height'] / 100} m"),
           _item("Connection", "Online"),
         ],
       ),
