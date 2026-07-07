@@ -1035,10 +1035,12 @@ class _MapScreenState extends State<MapScreen> {
       });
 
       if (savedStartPosition != null) {
+        route = [];
         _drawRoute(savedStartPosition!, position);
       } else {
         // Draw polyline from user to tapped pin
         if (currentPosition != null) {
+          route = [];
           _drawRoute(
             LatLng(currentPosition!.latitude, currentPosition!.longitude),
             position, // use the tapped location
@@ -3671,6 +3673,8 @@ class _MapScreenState extends State<MapScreen> {
                                               m.markerId.value == 'start_pin' ||
                                               m.markerId.value == 'tapped_pin',
                                         );
+
+                                        route = [];
 
                                         savedPinMarker = null;
                                         savedPinPosition = null;
