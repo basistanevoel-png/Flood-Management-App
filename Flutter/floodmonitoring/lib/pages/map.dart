@@ -1093,6 +1093,7 @@ class _MapScreenState extends State<MapScreen> {
 
     if (savedStartPosition != null && savedPinPosition == null) {
       setState(() {
+        route = [];
         _polylines.clear();
       });
     } else if (savedStartPosition != null && savedPinPosition != null) {
@@ -1104,6 +1105,7 @@ class _MapScreenState extends State<MapScreen> {
       );
     } else {
       setState(() {
+        route = [];
         _polylines.clear();
       });
     }
@@ -1305,6 +1307,7 @@ class _MapScreenState extends State<MapScreen> {
           tappedPosition = position;
 
           currentPlace = {"name": name, "location": position};
+          route = [];
 
           showPinConfirmationSheet = true;
           showDirectionSheet = false;
@@ -1347,6 +1350,7 @@ class _MapScreenState extends State<MapScreen> {
 
             // Redraw from live GPS to destination
             if (savedPinPosition != null) {
+              route = [];
               _drawRoute(
                 LatLng(currentPosition!.latitude, currentPosition!.longitude),
                 savedPinPosition!,
@@ -1389,6 +1393,7 @@ class _MapScreenState extends State<MapScreen> {
 
           // Use 'position' directly here to ensure the line connects to the NEW pin
           if (savedPinPosition != null) {
+            route = [];
             _drawRoute(position, savedPinPosition!);
 
             LatLngBounds bounds = LatLngBounds(
@@ -2490,6 +2495,8 @@ class _MapScreenState extends State<MapScreen> {
                                     cancelPinSelection();
                                     _goToUser();
                                     setState(() {
+                                      route = [];
+                                      _polylines.clear();
                                       showPinConfirmationSheet = false;
                                     });
                                   },
@@ -3689,7 +3696,6 @@ class _MapScreenState extends State<MapScreen> {
                                           "name": "",
                                           "location": LatLng(0.0, 0.0),
                                         };
-
                                         _polylines.clear();
                                         _circles.clear();
                                         normalRouting = true;

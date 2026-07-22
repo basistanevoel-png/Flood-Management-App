@@ -120,6 +120,11 @@ def get_latest_data_from_supabase():
                 "prediction": prediction_map.get(row_id)
             })
 
+        from pprint import pprint
+
+        print("===== RESULT =====")
+        pprint(result)
+
         return result
     
     except Exception as e:

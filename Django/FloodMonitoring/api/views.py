@@ -161,7 +161,7 @@ def get_emergency_contacts(request):
     )
 
 @api_view(['GET'])
-def forward_geocode(request):#unused in flutter app, use this to switch to a more open-source api service
+def forward_geocode(request):
     """
     REQUEST:
     /api/location-search?q=<place_name>&viewbox=<optional>
