@@ -81,99 +81,49 @@ def get_latest_data_from_supabase():
     try:
 
         sensor_response = (
-            supabase.table("SENSOR_AND_API_DATA") 
-            .select("*") 
-            .order("timestamp", desc=True) 
+            supabase.table("SENSORS")
+            .select("sensor_id")
             .execute()
         )
 
-        rows = sensor_response.data
+        sensors = sensor_response.data or []
 
-        latest_per_sensor = {}
+        latest_rows = []
 
-        for row in rows:
-            sensor_id = row["sensor_id"]
+        for sensor in sensors:
+            latest = (
+                supabase.table("SENSOR_AND_API_DATA")
+                .select("*")
+                .eq("sensor_id", sensor["sensor_id"])
+                .order("timestamp", desc=True)
+                .limit(1)
+                .execute()
+            )
 
-            if sensor_id not in latest_per_sensor:
-                latest_per_sensor[sensor_id] = row
-
-        latest_rows = list(latest_per_sensor.values())
-
-        prediction_response = supabase.table("PREDICTIONS") \
-            .select("*") \
-            .execute()
-
-        predictions = prediction_response.data
-
-        prediction_map = {
-            p["data_id"]: p for p in predictions
-        }
+            if latest.data:
+                latest_rows.append(latest.data[0])
 
         result = []
 
         for row in latest_rows:
-            sensor_id = row["sensor_id"]
-            row_id = row["id"]
+
+            prediction_response = (
+                supabase.table("PREDICTIONS")
+                .select("forecast, forecast_category")
+                .eq("data_id", row["id"])
+                .limit(1)
+                .execute()
+            )
+
+            prediction = (
+                prediction_response.data[0]
+                if prediction_response.data
+                else None
+            )
 
             result.append({
                 **row,
-                "prediction": prediction_map.get(row_id)
-            })
-
-        from pprint import pprint
-
-        print("===== RESULT =====")
-        pprint(result)
-
-        return result
-    
-    except Exception as e:
-        print("SUPABASE] ERROR:")
-        print(f"Type: {type(e).__name__}")
-        print(f"Message: {str(e)}")
-
-
-def get_latest_data_from_supabase():
-    try:
-
-        sensor_response = (
-            supabase.table("SENSOR_AND_API_DATA") 
-            .select("*") 
-            .order("timestamp", desc=True) 
-            .execute()
-        )
-
-        rows = sensor_response.data
-
-        latest_per_sensor = {}
-
-        for row in rows:
-            sensor_id = row["sensor_id"]
-
-            if sensor_id not in latest_per_sensor:
-                latest_per_sensor[sensor_id] = row
-
-        latest_rows = list(latest_per_sensor.values())
-
-        prediction_response = supabase.table("PREDICTIONS") \
-            .select("*") \
-            .execute()
-
-        predictions = prediction_response.data
-
-        prediction_map = {
-            p["data_id"]: p for p in predictions
-        }
-
-        result = []
-
-        for row in latest_rows:
-            sensor_id = row["sensor_id"]
-            row_id = row["id"]
-
-            result.append({
-                **row,
-                "prediction": prediction_map.get(row_id)
+                "prediction": prediction
             })
 
         return result
