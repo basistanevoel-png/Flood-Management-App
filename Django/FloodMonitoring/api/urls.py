@@ -4,7 +4,7 @@ from .sse import sensor_stream
 from .views import get_emergency_contacts, get_latest_data, get_place_details, get_safe_route, get_sensor_history, get_user_weather_info, get_vehicle_thresholds, get_web_chart_history, run_data_collector, search_places
 
 urlpatterns = [
-    #SSE API Endpoints
+    #SSE channels for the frontend (such as the web dashboard analytics and the Flutter App itself) to subscribe to for continuous and automatic data retrieval
     path('stream/sensors-channel/', sensor_stream),
 
     #Standard API Endpointss

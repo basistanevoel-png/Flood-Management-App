@@ -125,6 +125,12 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     "location": LatLng(0.0, 0.0),
   };
 
+  /// Test variables
+  final LatLng _testingLocation = const LatLng(
+    14.598846545268175,
+    121.01153916413739,
+  ); // PUP Catwalk
+
   /// Icon Paths
   final Map<String, String> iconPaths = {
     'Safe': 'assets/images/sensor_location_safe.png',
@@ -187,6 +193,8 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       setState(() {
         _rebuildSensorMarkers();
       });
+
+      _checkAvoidZones();
     });
 
     _connectivitySubscription = Connectivity().onConnectivityChanged.listen((
@@ -228,6 +236,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     if (pos == null) return;
 
     await _initializeEverything();
+    _startTimer();
     _startSseFallbackMonitor();
     startLocationUpdates();
   }
@@ -407,10 +416,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
     setState(() {
       // Basic visibility toggle
-      if (!showAllSensors && !showCriticalSensors) return;
-
       _sensorService.sensors.forEach((id, sensor) {
         _circles.removeWhere((c) => c.circleId.value == '${id}_circle');
+
+        if (!showAllSensors && !showCriticalSensors) return;
 
         final String status =
             sensor['sensorData']?['forecastedStatus'] ?? 'Default';
@@ -472,6 +481,35 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   /// ----- LOAD CURRENT LOCATION -----
   Future<void> _loadCurrentLocation() async {
+    if (testingMode) {
+      final testPosition = Position(
+        latitude: _testingLocation.latitude,
+        longitude: _testingLocation.longitude,
+        timestamp: DateTime.now(),
+        accuracy: 1.0,
+        altitude: 0.0,
+        heading: 0.0,
+        speed: 0.0,
+        speedAccuracy: 0.0,
+        altitudeAccuracy: 1.0,
+        headingAccuracy: 1.0,
+      );
+
+      if (mounted) {
+        setState(() => currentPosition = testPosition);
+
+        _addUserMarker();
+        getWeather();
+
+        if (_isFirstLocationLoad) {
+          _isFirstLocationLoad = false;
+          _goToUser();
+        }
+      }
+
+      return;
+    }
+
     Position? lastKnown = await Geolocator.getLastKnownPosition();
 
     if (lastKnown != null && mounted) {
@@ -507,6 +545,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   }
 
   /// ----- UPDATE TIME -----
+  void _startTimer() {
+    _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
+      if (!mounted) return;
+
+      _updateTime();
+    });
+  }
+
   void _updateTime() {
     final now = DateTime.now();
     final formattedTime = DateFormat('hh:mm a').format(now);
@@ -575,20 +621,15 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
   /// ----- UPDATE POSITION -----
   void _updatePosition(Position position) async {
-    LatLng rawLatLng = LatLng(position.latitude, position.longitude);
+    LatLng userLatLng;
 
-    LatLng userLatLng = rawLatLng;
+    if (testingMode) {
+      userLatLng = _testingLocation;
+    } else {
+      userLatLng = LatLng(position.latitude, position.longitude);
+    }
+
     LocationService.updateSpeed(position);
-
-    setState(() {
-      currentPosition = position;
-
-      if (route.isNotEmpty) {
-        userTooFar = _checkUserClosestDistanceToRoute();
-      }
-    });
-
-    _addUserMarker();
 
     setState(() {
       currentPosition = Position(
@@ -603,6 +644,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         altitudeAccuracy: position.altitudeAccuracy,
         headingAccuracy: position.headingAccuracy,
       );
+
+      if (route.isNotEmpty) {
+        userTooFar = _checkUserClosestDistanceToRoute();
+      }
     });
 
     _addUserMarker();
@@ -611,12 +656,31 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         savedPinPosition != null &&
         tappedPosition == null &&
         startPosition == null) {
+      debugPrint("IN: UPDATEPOSITION");
       _drawRoute(userLatLng, savedPinPosition!);
     }
+  }
+
+  Future<void> _checkAvoidZones() async {
+    if (currentPosition == null) return;
+
+    final userLatLng = LatLng(
+      currentPosition!.latitude,
+      currentPosition!.longitude,
+    );
 
     final avoidZones = buildAvoidZonesFromSensors();
-    bool inside = isInsideAvoidZone(userLatLng, avoidZones);
-    bool near = await isNearAvoidZone(userLatLng, avoidZones);
+
+    debugPrint(
+      "AVOID ZONE CHECK | "
+      "zones=${avoidZones.length} | "
+      "inside=${isInsideAvoidZone(userLatLng, avoidZones)}",
+    );
+
+    final inside = isInsideAvoidZone(userLatLng, avoidZones);
+    final near = await isNearAvoidZone(userLatLng, avoidZones);
+
+    if (!mounted) return;
 
     if (near) {
       startAlert();
@@ -1051,11 +1115,16 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
       if (savedStartPosition != null) {
         route = [];
+
+        debugPrint("IN: ONMAPTAP; CONDITION: savedStartPosition != null");
+
         _drawRoute(savedStartPosition!, position);
       } else {
         // Draw polyline from user to tapped pin
         if (currentPosition != null) {
           route = [];
+
+          debugPrint("IN: ONMAPTAP; CONDITION: currentPosition != null");
           _drawRoute(
             LatLng(currentPosition!.latitude, currentPosition!.longitude),
             position, // use the tapped location
@@ -1064,22 +1133,22 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
       }
     }
 
-    if (testingMode) {
-      Position fakePosition = Position(
-        latitude: position.latitude,
-        longitude: position.longitude,
-        timestamp: DateTime.now(),
-        accuracy: 1,
-        altitude: 0,
-        altitudeAccuracy: 1,
-        heading: 0,
-        headingAccuracy: 1,
-        speed: 0,
-        speedAccuracy: 1,
-      );
+    // if (testingMode) {
+    //   Position fakePosition = Position(
+    //     latitude: position.latitude,
+    //     longitude: position.longitude,
+    //     timestamp: DateTime.now(),
+    //     accuracy: 1,
+    //     altitude: 0,
+    //     altitudeAccuracy: 1,
+    //     heading: 0,
+    //     headingAccuracy: 1,
+    //     speed: 0,
+    //     speedAccuracy: 1,
+    //   );
 
-      _updatePosition(fakePosition);
-    }
+    //   _updatePosition(fakePosition);
+    // }
   }
 
   /// ----- CANCEL PIN SELECTION -----
@@ -1112,8 +1181,14 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         _polylines.clear();
       });
     } else if (savedStartPosition != null && savedPinPosition != null) {
+      debugPrint(
+        "IN: CANCELPINSELECTION; CONDITION: savedStartPosition != null && savedPinPosition != null",
+      );
       _drawRoute(savedStartPosition!, savedPinPosition!);
     } else if (savedPinMarker != null && currentPosition != null) {
+      debugPrint(
+        "IN: CANCELPINSELECTION; CONDITION: savedPinMarker != null && currentPosition != null",
+      );
       _drawRoute(
         LatLng(currentPosition!.latitude, currentPosition!.longitude),
         savedPinMarker!.position,
@@ -1200,7 +1275,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
   bool isRerouting = false;
   List<LatLng> route = [];
   List<Map<String, dynamic>> existingAvoidZonesBeforeRouting = [];
-
+  int _routeRequestId = 0;
   static const double trimDistance = 25;
 
   void _trimRoute() {
@@ -1226,32 +1301,141 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// ----- DRAW ROUTE -----
-  void _drawRoute(LatLng start, LatLng end) async {
-    if (route.isEmpty) {
-      existingAvoidZonesBeforeRouting = buildAvoidZonesFromSensors();
+  Future<void> _drawRoute(
+    LatLng start,
+    LatLng end, {
+    bool forceReroute = false,
+  }) async {
+    debugPrint(
+      "DRAW ROUTE CALLED | "
+      "start=$start | "
+      "end=$end | "
+      "routeEmpty=${route.isEmpty} | "
+      "userTooFar=$userTooFar | "
+      "forceReroute=$forceReroute",
+    );
+
+    final int requestId = ++_routeRequestId;
+
+    late final List<Map<String, dynamic>> avoidZones;
+
+    // --------------------------------------------------
+    // 1. EXPLICIT REROUTE
+    // --------------------------------------------------
+    if (forceReroute) {
+      avoidZones = buildAvoidZonesFromSensors();
+
+      debugPrint(
+        "ROUTE TYPE: EXPLICIT REROUTE\n"
+        "CAPTURED AVOID ZONES: ${avoidZones.length}",
+      );
     }
+    // --------------------------------------------------
+    // 2. NEW ROUTE
+    // --------------------------------------------------
+    else if (route.isEmpty) {
+      existingAvoidZonesBeforeRouting = buildAvoidZonesFromSensors();
 
-    if (route.isEmpty || userTooFar || isRerouting) {
-      userTooFar = false;
-      List<Map<String, dynamic>> avoidZones = [];
+      avoidZones = existingAvoidZonesBeforeRouting;
 
-      if (isRerouting) {
-        isRerouting = false;
-        avoidZones = buildAvoidZonesFromSensors();
-      } else {
-        avoidZones = existingAvoidZonesBeforeRouting;
+      debugPrint(
+        "ROUTE TYPE: INITIAL ROUTE\n"
+        "CAPTURED AVOID ZONES: ${avoidZones.length}",
+      );
+    }
+    // --------------------------------------------------
+    // 3. AUTOMATIC REROUTE BECAUSE USER LEFT ROUTE
+    // --------------------------------------------------
+    else if (userTooFar) {
+      avoidZones = existingAvoidZonesBeforeRouting;
+
+      debugPrint(
+        "ROUTE TYPE: USER TOO FAR\n"
+        "USING EXISTING AVOID ZONES: ${avoidZones.length}",
+      );
+    }
+    // --------------------------------------------------
+    // 4. OTHERWISE DON'T REQUEST A NEW ROUTE
+    // --------------------------------------------------
+    else {
+      _trimRoute();
+
+      if (requestId != _routeRequestId) {
+        return;
       }
 
-      route = await PolylineService.getRoute(
-        start,
-        end,
-        convertVehicle(selectedVehicle),
-        avoidZones,
-      );
-    } else {
-      _trimRoute();
+      setState(() {
+        _polylines.clear();
+
+        _polylines.addAll([
+          Polyline(
+            polylineId: const PolylineId("route_border"),
+            points: route,
+            color: colorPolylineMain,
+            width: 6,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+            jointType: JointType.round,
+            zIndex: 2,
+          ),
+          Polyline(
+            polylineId: const PolylineId("route_main"),
+            points: route,
+            color: colorPolylineBack,
+            width: 4,
+            startCap: Cap.roundCap,
+            endCap: Cap.roundCap,
+            jointType: JointType.round,
+            zIndex: 2,
+          ),
+        ]);
+      });
+
+      return;
     }
+
+    debugPrint(
+      "========== ROUTE REQUEST ==========\n"
+      "START: $start\n"
+      "END: $end\n"
+      "FORCE REROUTE: $forceReroute\n"
+      "USER TOO FAR: $userTooFar\n"
+      "AVOID ZONES COUNT: ${avoidZones.length}\n"
+      "AVOID ZONES EMPTY: ${avoidZones.isEmpty}\n"
+      "AVOID ZONES: $avoidZones\n"
+      "===================================",
+    );
+
+    // Once we've captured the state for this routing operation,
+    // don't let later state changes affect this request.
+    final newRoute = await PolylineService.getRoute(
+      start,
+      end,
+      convertVehicle(selectedVehicle),
+      avoidZones,
+    );
+
+    debugPrint(
+      "========== ROUTE RESPONSE ==========\n"
+      "POINTS: ${newRoute.length}\n"
+      "====================================",
+    );
+
+    // Ignore stale responses
+    if (requestId != _routeRequestId) {
+      debugPrint(
+        "Ignoring stale route response: "
+        "request=$requestId, latest=$_routeRequestId",
+      );
+      return;
+    }
+
+    // Only now consume userTooFar
+    if (userTooFar) {
+      userTooFar = false;
+    }
+
+    route = newRoute;
 
     setState(() {
       _polylines.clear();
@@ -1267,7 +1451,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           jointType: JointType.round,
           zIndex: 2,
         ),
-
         Polyline(
           polylineId: const PolylineId("route_main"),
           points: route,
@@ -1366,6 +1549,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
           // Redraw from live GPS to destination
           if (savedPinPosition != null) {
             route = [];
+            debugPrint(
+              "IN: OPENPLACESEARCH; CONDITION: selectedLocationPosition == null BLOCK savedPinPosition != null",
+            );
             _drawRoute(
               LatLng(currentPosition!.latitude, currentPosition!.longitude),
               savedPinPosition!,
@@ -1411,6 +1597,9 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
         // Use 'position' directly here to ensure the line connects to the NEW pin
         if (savedPinPosition != null) {
           route = [];
+          debugPrint(
+            "IN: OPENPLACESEARCH; CONDITION: ELSE BLOCK savedPinPosition != null",
+          );
           _drawRoute(selectedLocationPosition, savedPinPosition!);
 
           LatLngBounds bounds = LatLngBounds(
@@ -1460,6 +1649,7 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
     if (start != null) {
       route = [];
+      debugPrint("IN: HANDLEDESTINATIONCAMERA");
       _drawRoute(start, destination);
       LatLngBounds bounds = LatLngBounds(
         southwest: LatLng(
@@ -2109,7 +2299,10 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
 
                               setState(() {
                                 showAllSensors = val;
-                                showCriticalSensors = false;
+                                showSensorCoverage = val;
+                                showCriticalSensors = (val == true)
+                                    ? false
+                                    : showCriticalSensors;
                               });
                               _rebuildSensorMarkers();
                             },
@@ -2746,7 +2939,6 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                     setState(() {
                                       normalRouting = false;
                                       showRerouteConfirmationSheet = false;
-                                      isRerouting = true;
                                     });
 
                                     if (!hasValidPin) {
@@ -2756,16 +2948,17 @@ class _MapScreenState extends State<MapScreen> with WidgetsBindingObserver {
                                       });
                                       openPlaceSearch();
                                     } else {
-                                      WidgetsBinding.instance
-                                          .addPostFrameCallback((_) {
-                                            _drawRoute(
-                                              LatLng(
-                                                currentPosition!.latitude,
-                                                currentPosition!.longitude,
-                                              ),
-                                              savedPinMarker!.position,
-                                            );
-                                          });
+                                      debugPrint(
+                                        "IN: REROUTE'S ONTAP PROCEDURE",
+                                      );
+                                      _drawRoute(
+                                        LatLng(
+                                          currentPosition!.latitude,
+                                          currentPosition!.longitude,
+                                        ),
+                                        savedPinMarker!.position,
+                                        forceReroute: true,
+                                      );
                                     }
                                   },
                                 ),

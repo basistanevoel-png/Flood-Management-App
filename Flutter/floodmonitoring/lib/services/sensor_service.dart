@@ -196,7 +196,9 @@ class SensorService {
         ),
         "radius": double.parse(item["radius"].toString()),
         "height": double.parse(item["ground_distance"].toString()),
-        "location": item["location_name"].toString(),
+        "location": item["location_name"].toString().length > 12
+            ? "${item["location_name"].toString().substring(0, 12)}..."
+            : item["location_name"].toString(),
 
         "sensorData": {
           "distance": 0.0,

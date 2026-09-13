@@ -70,6 +70,8 @@ def ingest_datapoints(data_batch: list[dict]):
 
             #other supplementary weather information
             'weather_info': sensor_weather_info.get(sensor_id, {}),
+
+            
         })
 
         print(f"[INGESTER] Sensor reading processed...")

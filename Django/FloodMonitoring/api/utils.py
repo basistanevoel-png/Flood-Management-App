@@ -1,7 +1,7 @@
 from rest_framework.response import Response
 import math
 
-from api.supabase.utils import get_classification_metrics, get_latest_data_from_supabase, get_latest_overall_analytics_from_supabase, get_regression_metrics, get_specific_sensor_details_from_supabase
+from api.supabase.utils import get_classification_metrics, get_latest_data_from_supabase, get_latest_overall_analytics_from_supabase, get_regression_metrics, get_sensor_history_from_supabase, get_specific_sensor_details_from_supabase
 from api.util.helpers.evaluator import get_severity
 
 VEHICLE_PASSABLE = {
@@ -33,6 +33,7 @@ def format_latest_sensor_data():
         sensor_id = row["sensor_id"]
 
         details = get_specific_sensor_details_from_supabase(sensor_id)
+        flood_trend = get_sensor_history_from_supabase(sensor_id)
 
         prediction = row.get("prediction") or {}
 
@@ -85,7 +86,11 @@ def format_latest_sensor_data():
             "metrics": {
                 "regression": regression_metrics,
                 "classification": classification_metrics
-            }
+            },
+
+            #per-sensor 24-hr flood trend
+            "hourly_data" : flood_trend['hourly_data'],
+            "labels" : flood_trend['labels']
         }
 
     return result
